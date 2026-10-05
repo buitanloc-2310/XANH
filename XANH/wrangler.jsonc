@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "xanh-sky-first",
+  "compatibility_date": "2026-10-01",
+  "pages_build_output_dir": "./public",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "xanh",
+      "database_id": "6445b394-1588-4ef0-b22d-d2e312cfa596",
+      "migrations_dir": "./migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "STORAGE",
+      "bucket_name": "xanh"
+    }
+  ],
+  "vars": {
+    "APP_NAME": "Xanh Sky First",
+    "APP_URL": "https://xanh.skyfirst.io.vn",
+    "MAIL_FROM": "Xanh Sky First <xanh@skyfirst.io.vn>"
+  }
+}

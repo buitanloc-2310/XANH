@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /login
+Disallow: /setup
+Sitemap: https://xanh.skyfirst.io.vn/sitemap.xml

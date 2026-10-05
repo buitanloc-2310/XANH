@@ -54,3 +54,14 @@ Không có tầng `XANH/XANH`.
 ## Trước khi go-live
 
 Nhà vận hành vẫn phải thực hiện các bước hạ tầng không thể đóng sẵn trong ZIP: apply D1 migration vào account Cloudflare, tạo `SETUP_SECRET`, tùy chọn cấu hình Resend, kết nối domain/Pages project, sau đó chạy smoke test trên production. Không có secret thật nào được nhúng trong gói bàn giao.
+
+## Upgrade 1–8 (2026-10-05)
+- Public navigation uses real pathname routes; no homepage hash-only navigation.
+- Supplied logo has transparent outer background for header/footer/login/admin presentation.
+- Public People/Coordination profiles with stable slugs, photo media IDs and index controls.
+- Privacy, Terms, Data Policy, Accessibility and HTML/XML sitemap routes are clickable.
+- Green Technology visual system, reduced-motion support and responsive public UI.
+- Role-aware Management Center navigation for six roles; API authorization remains server-side.
+- Direct website Form Builder foundation and private form submissions in D1.
+- Resend variables support EMAIL_FROM + EMAIL_REPLY_TO; PBKDF2 remains hard-pinned to 100000.
+- Migration 0002_people_forms.sql must be applied to the production D1 before using People/Forms.

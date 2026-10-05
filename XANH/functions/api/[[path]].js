@@ -44,11 +44,12 @@ async function settingsGet(env) {
 
 async function sendMail(env, { to, subject, html }) {
   if (!env.RESEND_API_KEY) return { sent: false, reason: 'RESEND_API_KEY chưa được cấu hình' };
-  const from = env.MAIL_FROM || 'Xanh Sky First <xanh@skyfirst.io.vn>';
+  const from = env.EMAIL_FROM || env.MAIL_FROM || 'Xanh Sky First <xanh@skyfirst.io.vn>';
+  const replyTo = env.EMAIL_REPLY_TO || 'xanh@skyfirst.io.vn';
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from, to: [to], subject, html })
+    body: JSON.stringify({ from, to: [to], reply_to: replyTo, subject, html })
   });
   if (!res.ok) return { sent: false, reason: `Resend HTTP ${res.status}` };
   return { sent: true };
@@ -191,6 +192,32 @@ async function handlePublic(env, request, action, p) {
     await env.DB.prepare(`INSERT INTO applications(kind,reference_id,code,full_name,email,phone,payload_json,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,'new',?,?)`).bind(kind,b.reference_id||null,code,name,email,phone,JSON.stringify(b.payload||{}),t,t).run();
     return json({ok:true,code,message:'Đăng ký đã được ghi nhận.'},201);
   }
+  if (action === 'people' && request.method==='GET') {
+    const rows=await env.DB.prepare(`SELECT id,slug,name,title,role_group,bio,expertise,photo_media_id,links_json,seo_json FROM people WHERE is_public=1 ORDER BY sort_order,name`).all();
+    return json({ok:true,items:rows.results.map(x=>({...x,links:asJson(x.links_json,{}),seo:asJson(x.seo_json,{}),photo_url:x.photo_media_id?`/api/media/${x.photo_media_id}`:null}))});
+  }
+  if (action === 'person' && request.method==='GET') {
+    const slug=cleanText(u.searchParams.get('slug'),140); const row=await env.DB.prepare(`SELECT * FROM people WHERE slug=? AND is_public=1 LIMIT 1`).bind(slug).first(); assert(row,404,'Không tìm thấy hồ sơ.');
+    return json({ok:true,item:{...row,links:asJson(row.links_json,{}),seo:asJson(row.seo_json,{}),photo_url:row.photo_media_id?`/api/media/${row.photo_media_id}`:null}});
+  }
+  if (action === 'forms' && request.method==='GET') {
+    const rows=await env.DB.prepare(`SELECT id,slug,name,description,kind,status,fields_json,settings_json,cover_media_id,opens_at,closes_at,capacity FROM forms WHERE status='open' ORDER BY updated_at DESC`).all();
+    return json({ok:true,items:rows.results.map(x=>({...x,fields:asJson(x.fields_json,[]),settings:asJson(x.settings_json,{}),cover_url:x.cover_media_id?`/api/media/${x.cover_media_id}`:null}))});
+  }
+  if (action === 'form' && request.method==='GET') {
+    const slug=cleanText(u.searchParams.get('slug'),140); const row=await env.DB.prepare(`SELECT * FROM forms WHERE slug=? AND status='open' LIMIT 1`).bind(slug).first(); assert(row,404,'Biểu mẫu chưa mở hoặc không tồn tại.');
+    return json({ok:true,item:{...row,fields:asJson(row.fields_json,[]),settings:asJson(row.settings_json,{}),cover_url:row.cover_media_id?`/api/media/${row.cover_media_id}`:null}});
+  }
+  if (action === 'form-submit' && request.method==='POST') {
+    await rateLimit(env,request,'form-submit',10,3600); const b=await readJson(request); const form=await env.DB.prepare(`SELECT * FROM forms WHERE id=? AND status='open'`).bind(Number(b.form_id)).first(); assert(form,404,'Biểu mẫu chưa mở hoặc không tồn tại.');
+    const name=cleanText(b.full_name,120),email=cleanText(b.email,200).toLowerCase(),phone=cleanText(b.phone,40); assert(name.length>=2&&validEmail(email),400,'Thông tin người đăng ký chưa hợp lệ.');
+    if(form.closes_at) assert(new Date(form.closes_at)>new Date(),409,'Biểu mẫu đã hết hạn.');
+    if(form.capacity){const c=await env.DB.prepare(`SELECT COUNT(*) c FROM form_submissions WHERE form_id=?`).bind(form.id).first();assert(Number(c.c)<Number(form.capacity),409,'Biểu mẫu đã đủ số lượng.');}
+    const code=`XSF-${Date.now().toString(36).toUpperCase()}-${randomToken(3).slice(0,4).toUpperCase()}`,t=now();
+    await env.DB.prepare(`INSERT INTO form_submissions(form_id,code,full_name,email,phone,answers_json,status,created_at,updated_at) VALUES(?,?,?,?,?,?,'new',?,?)`).bind(form.id,code,name,email,phone,JSON.stringify(b.answers||{}),t,t).run();
+    await sendMail(env,{to:email,subject:`Xác nhận hồ sơ ${code} · Xanh Sky First`,html:`<p>Xin chào ${escapeHtml(name)},</p><p>Xanh Sky First đã nhận hồ sơ của bạn cho <b>${escapeHtml(form.name)}</b>.</p><p>Mã hồ sơ: <b>${code}</b></p>`});
+    return json({ok:true,code,message:'Hồ sơ đã được ghi nhận.'},201);
+  }
   throw new HttpError(404,'Không tìm thấy API công khai.');
 }
 
@@ -270,6 +297,19 @@ async function handleAdmin(env, request, action, p) {
     if(request.method==='GET'){const rows=await env.DB.prepare(`SELECT id,name,email,role,status,created_at,updated_at,last_login_at FROM users ORDER BY created_at DESC`).all();return json({ok:true,items:rows.results});}
     if(request.method==='POST'){const b=await readJson(request),name=cleanText(b.name,120),email=cleanText(b.email,200).toLowerCase(),role=['administrator','content_editor','project_manager','volunteer_coordinator','viewer'].includes(b.role)?b.role:'viewer';assert(name.length>=2&&validEmail(email),400,'Thông tin người dùng không hợp lệ.');const ph=await hashPassword(String(b.password||'')),t=now();const r=await env.DB.prepare(`INSERT INTO users(name,email,password_hash,role,status,created_at,updated_at) VALUES(?,?,?,?, 'active',?,?)`).bind(name,email,ph,role,t,t).run();await audit(env,user.id,'user.create','user',r.meta.last_row_id,{role,pbkdf2_iterations:PBKDF2_ITERATIONS},request);return json({ok:true,id:r.meta.last_row_id},201);}
   }
+  if(action==='people'){
+    assert(['root_admin','administrator','content_editor'].includes(user.role),403,'Bạn không có quyền quản lý hồ sơ công khai.');
+    if(request.method==='GET'){const rows=await env.DB.prepare(`SELECT * FROM people ORDER BY sort_order,name`).all();return json({ok:true,items:rows.results.map(x=>({...x,links:asJson(x.links_json,{}),seo:asJson(x.seo_json,{})}))});}
+    if(request.method==='POST'){const b=await readJson(request),name=cleanText(b.name,160),slug=safeSlug(b.slug||name),t=now();assert(name&&slug,400,'Tên/slug không hợp lệ.');const r=await env.DB.prepare(`INSERT INTO people(slug,name,title,role_group,bio,expertise,photo_media_id,links_json,seo_json,sort_order,is_public,allow_index,created_by,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(slug,name,cleanText(b.title,200),cleanText(b.role_group,80),cleanText(b.bio,12000),cleanText(b.expertise,1000),b.photo_media_id||null,JSON.stringify(b.links||{}),JSON.stringify(b.seo||{}),Number(b.sort_order||0),b.is_public?1:0,b.allow_index?1:0,user.id,user.id,t,t).run();await audit(env,user.id,'person.create','person',r.meta.last_row_id,{slug},request);return json({ok:true,id:r.meta.last_row_id},201);}
+  }
+  if(action==='person'&&p[2]){assert(['root_admin','administrator','content_editor'].includes(user.role),403,'Bạn không có quyền quản lý hồ sơ công khai.');const id=Number(p[2]),old=await env.DB.prepare(`SELECT * FROM people WHERE id=?`).bind(id).first();assert(old,404,'Không tìm thấy hồ sơ.');if(request.method==='PUT'){const b=await readJson(request);await env.DB.prepare(`UPDATE people SET slug=?,name=?,title=?,role_group=?,bio=?,expertise=?,photo_media_id=?,links_json=?,seo_json=?,sort_order=?,is_public=?,allow_index=?,updated_by=?,updated_at=? WHERE id=?`).bind(safeSlug(b.slug||old.slug),cleanText(b.name||old.name,160),cleanText(b.title??old.title,200),cleanText(b.role_group??old.role_group,80),cleanText(b.bio??old.bio,12000),cleanText(b.expertise??old.expertise,1000),b.photo_media_id??old.photo_media_id,JSON.stringify(b.links??asJson(old.links_json,{})),JSON.stringify(b.seo??asJson(old.seo_json,{})),Number(b.sort_order??old.sort_order),b.is_public?1:0,b.allow_index?1:0,user.id,now(),id).run();await audit(env,user.id,'person.update','person',id,{},request);return json({ok:true});}if(request.method==='DELETE'){assert(ADMIN_ROLES.includes(user.role),403,'Chỉ quản trị viên được xóa hồ sơ.');await env.DB.prepare(`DELETE FROM people WHERE id=?`).bind(id).run();return json({ok:true});}}
+  if(action==='forms'){
+    assert(['root_admin','administrator','volunteer_coordinator'].includes(user.role),403,'Bạn không có quyền quản lý biểu mẫu.');
+    if(request.method==='GET'){const rows=await env.DB.prepare(`SELECT * FROM forms ORDER BY updated_at DESC`).all();return json({ok:true,items:rows.results.map(x=>({...x,fields:asJson(x.fields_json,[]),settings:asJson(x.settings_json,{})}))});}
+    if(request.method==='POST'){const b=await readJson(request),name=cleanText(b.name,200),slug=safeSlug(b.slug||name),t=now();assert(name&&slug,400,'Tên/slug không hợp lệ.');const r=await env.DB.prepare(`INSERT INTO forms(slug,name,description,kind,status,fields_json,settings_json,cover_media_id,opens_at,closes_at,capacity,created_by,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(slug,name,cleanText(b.description,5000),cleanText(b.kind,80),['draft','open','closed','archived'].includes(b.status)?b.status:'draft',JSON.stringify(b.fields||[]),JSON.stringify(b.settings||{}),b.cover_media_id||null,b.opens_at||null,b.closes_at||null,b.capacity||null,user.id,user.id,t,t).run();await audit(env,user.id,'form.create','form',r.meta.last_row_id,{slug},request);return json({ok:true,id:r.meta.last_row_id},201);}
+  }
+  if(action==='form'&&p[2]){assert(['root_admin','administrator','volunteer_coordinator'].includes(user.role),403,'Bạn không có quyền quản lý biểu mẫu.');const id=Number(p[2]),old=await env.DB.prepare(`SELECT * FROM forms WHERE id=?`).bind(id).first();assert(old,404,'Không tìm thấy biểu mẫu.');if(request.method==='PUT'){const b=await readJson(request);await env.DB.prepare(`UPDATE forms SET slug=?,name=?,description=?,kind=?,status=?,fields_json=?,settings_json=?,cover_media_id=?,opens_at=?,closes_at=?,capacity=?,updated_by=?,updated_at=? WHERE id=?`).bind(safeSlug(b.slug||old.slug),cleanText(b.name||old.name,200),cleanText(b.description??old.description,5000),cleanText(b.kind??old.kind,80),['draft','open','closed','archived'].includes(b.status)?b.status:old.status,JSON.stringify(b.fields??asJson(old.fields_json,[])),JSON.stringify(b.settings??asJson(old.settings_json,{})),b.cover_media_id??old.cover_media_id,b.opens_at??old.opens_at,b.closes_at??old.closes_at,b.capacity??old.capacity,user.id,now(),id).run();await audit(env,user.id,'form.update','form',id,{},request);return json({ok:true});}}
+  if(action==='submissions'&&request.method==='GET'){assert(['root_admin','administrator','volunteer_coordinator'].includes(user.role),403,'Bạn không có quyền xem hồ sơ.');const rows=await env.DB.prepare(`SELECT s.*,f.name AS form_name FROM form_submissions s JOIN forms f ON f.id=s.form_id ORDER BY s.created_at DESC LIMIT 500`).all();return json({ok:true,items:rows.results.map(x=>({...x,answers:asJson(x.answers_json,{})}))});}
   throw new HttpError(404,'Không tìm thấy API quản trị.');
 }
 

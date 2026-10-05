@@ -1,67 +1,55 @@
-# FINAL ACCEPTANCE — Xanh Sky First Production
+# FINAL ACCEPTANCE — Xanh Sky First
 
-## Cấu trúc bàn giao
+Ngày rà source: 2026-10-05.
 
-```text
-XANH.zip
-└── XANH/
-    ├── functions/
-    ├── migrations/
-    ├── public/
-    ├── src/
-    ├── scripts/
-    ├── tests/
-    ├── package.json
-    ├── wrangler.jsonc
-    ├── README.md
-    ├── SECURITY.md
-    └── FINAL_ACCEPTANCE.md
-```
+Quy ước:
+- **PASS**: có thể kiểm tra trực tiếp trong source/local runtime tại thời điểm đóng gói.
+- **NOT TESTABLE LOCALLY**: phụ thuộc Cloudflare production binding, secret, domain hoặc trình duyệt production nên không tự tuyên bố PASS.
+- **FAIL**: chưa đạt và không được che giấu.
 
-Không có tầng `XANH/XANH`.
+## 25 tiêu chí nghiệm thu
 
-## Acceptance checklist
+| # | Tiêu chí | Kết quả | Kiểm tra |
+|---|---|---|---|
+| 1 | Build/source JavaScript không syntax error | PASS | `node --check` toàn bộ JS/MJS và test suite |
+| 2 | Không syntax error | PASS | `node --check` |
+| 3 | Không còn mức PBKDF2 cũ vượt 100000; PBKDF2 = 100000 | PASS | test crypto + verify script |
+| 4 | Route public refresh/deep-link | NOT TESTABLE LOCALLY | `_redirects` đã cấu hình SPA fallback; cần smoke test trên Pages domain |
+| 5 | Menu/Footer không dùng hash route chính | PASS | route pathname thật trong `public/app.js` |
+| 6 | 5 trang pháp lý/Sitemap có nội dung thật | PASS | migration `0003` seed 5 trang CMS; `/sitemap` có UI riêng |
+| 7 | Tạo người + upload ảnh + lưu photo_media_id + public profile | NOT TESTABLE LOCALLY | UI/API/R2 flow đã nối đủ; cần D1+R2 production để test end-to-end |
+| 8 | Media upload thực sự đi R2 | NOT TESTABLE LOCALLY | API gọi `env.STORAGE.put`; cần binding production để xác minh |
+| 9 | Form Builder tạo form mới | NOT TESTABLE LOCALLY | UI + API + schema có đủ; cần browser+D1 smoke test |
+| 10 | Form public submit ghi D1 | NOT TESTABLE LOCALLY | API ghi `form_submissions`; cần D1 production |
+| 11 | Hồ sơ xuất hiện trong Admin | NOT TESTABLE LOCALLY | Admin đọc `/api/admin/submissions`; cần D1 production |
+| 12 | RBAC kiểm tra backend | PASS | feature/type permission enforced trong API, không chỉ ẩn menu |
+| 13 | Content Editor không quản trị user | PASS | `/api/admin/users` chỉ Root Admin |
+| 14 | Viewer không sửa dữ liệu | PASS | Viewer chỉ có dashboard/audit GET |
+| 15 | Draft/Preview/Publish content | NOT TESTABLE LOCALLY | UI/editor/API đã có; cần browser smoke test |
+| 16 | Sitemap/robots | PASS | `functions/sitemap.xml.js` động + `public/robots.txt` |
+| 17 | SEO metadata | PASS | client cập nhật title/description/canonical/OG/robots; sitemap động |
+| 18 | Mobile responsive | NOT TESTABLE LOCALLY | CSS breakpoints có; cần visual QA trên thiết bị/browser |
+| 19 | Admin không hard-reload khi chuyển module/lưu | PASS | History API + fetch; document không reload cho thao tác chính |
+| 20 | Không có `href="#"`/Coming soon trong luồng production chính | PASS | verify/search source |
+| 21 | Không seed số liệu/người/dự án/thành tích giả | PASS | chỉ seed nội dung giới thiệu và chính sách; dữ liệu thực dùng empty state |
+| 22 | Resend dùng `EMAIL_FROM` + `EMAIL_REPLY_TO` | PASS | backend đọc đúng tên biến production |
+| 23 | Setup chỉ chạy khi chưa có Root Admin | PASS | backend kiểm tra `setupStatus()` trước insert |
+| 24 | Setup không tạo Root Admin thứ hai | PASS | trả 409 khi đã có Root Admin |
+| 25 | Password PBKDF2-SHA256/100000 | PASS | unit test hash/verify |
 
-- [x] Cloudflare Pages/Functions architecture.
-- [x] D1 binding `DB`, database `xanh`, ID `6445b394-1588-4ef0-b22d-d2e312cfa596`.
-- [x] R2 binding `STORAGE`, bucket `xanh`.
-- [x] PBKDF2-SHA256 hard-pinned **100,000** iterations.
-- [x] Không có `mức iteration cũ vượt 100000` trong production source.
-- [x] First-time Setup dùng `SETUP_SECRET`, tự khóa sau khi có Root Admin.
-- [x] Login/logout/session/đổi mật khẩu/reset-password backend.
-- [x] RBAC và Audit Log backend.
-- [x] Public homepage lấy CMS data từ D1.
-- [x] Hero, giới thiệu, trụ cột, lĩnh vực, dynamic projects/opportunities/news, impact, newsletter, CTA, mega footer.
-- [x] Nội dung mặc định không bịa số liệu, đối tác hay phạm vi hoạt động.
-- [x] Dấu ấn Xanh count-up từ dữ liệu `verified` trong D1; không có số giả.
-- [x] Website CMS và page block editor.
-- [x] Drag/reorder section trong Page Builder.
-- [x] Desktop/Tablet/Mobile preview trong page editor.
-- [x] Content block editor cho bài viết/dự án/hoạt động/cơ hội/tài nguyên/sáng kiến.
-- [x] Media Library lưu file lên R2.
-- [x] Admin chọn ảnh qua Upload/Media Library, không phải nhập URL ảnh.
-- [x] Chấp nhận ảnh nhiều tỷ lệ/kích thước; presentation tách khỏi kích thước file gốc.
-- [x] Media metadata: alt, caption, credit, focus point.
-- [x] Mini CRM cho đăng ký/TNV.
-- [x] Impact Data workflow xác minh.
-- [x] Newsletter opt-in và verification token.
-- [x] Contact form route theo loại liên hệ.
-- [x] Responsive public + admin.
-- [x] Security headers, upload allowlist, validation và rate limits.
-- [x] Logo Xanh Sky First do người dùng cung cấp được đóng gói tại `public/assets/xanh-sky-first-logo.png`.
-- [x] Tests + production verification script.
+## Bổ sung production-hardening đã làm
 
-## Trước khi go-live
+- Migration `0003_production_hardening.sql` áp dụng thành công trên SQLite local sau `0001` và `0002`.
+- Content revisions và page revisions.
+- Private form uploads lưu R2 nhưng không expose qua `/api/media/:id`; chỉ admin có quyền hồ sơ mới tải được.
+- Submission timeline + status update + email tùy chọn.
+- Media picker dùng chung cho ảnh người, cover form và cover/content blocks.
+- Dynamic XML sitemap lấy content/profile/form/page public thật.
+- Service worker cung cấp shell fallback khi mạng lỗi; admin/API không cache.
+- 403/404/500 UI states.
+- `prefers-reduced-motion`, focus-visible, keyboard command palette (`Ctrl/Cmd + K`).
+- Reset-password dùng pathname thật `/reset-password?token=...`, không hash route.
 
-Nhà vận hành vẫn phải thực hiện các bước hạ tầng không thể đóng sẵn trong ZIP: apply D1 migration vào account Cloudflare, tạo `SETUP_SECRET`, tùy chọn cấu hình Resend, kết nối domain/Pages project, sau đó chạy smoke test trên production. Không có secret thật nào được nhúng trong gói bàn giao.
+## Những phần không được tuyên bố là đã xác minh production
 
-## Upgrade 1–8 (2026-10-05)
-- Public navigation uses real pathname routes; no homepage hash-only navigation.
-- Supplied logo has transparent outer background for header/footer/login/admin presentation.
-- Public People/Coordination profiles with stable slugs, photo media IDs and index controls.
-- Privacy, Terms, Data Policy, Accessibility and HTML/XML sitemap routes are clickable.
-- Green Technology visual system, reduced-motion support and responsive public UI.
-- Role-aware Management Center navigation for six roles; API authorization remains server-side.
-- Direct website Form Builder foundation and private form submissions in D1.
-- Resend variables support EMAIL_FROM + EMAIL_REPLY_TO; PBKDF2 remains hard-pinned to 100000.
-- Migration 0002_people_forms.sql must be applied to the production D1 before using People/Forms.
+Không thể từ ZIP/local source tự xác minh: secret Cloudflare, quyền R2 thật, Resend domain verification, custom domain, D1 production state, cache/CDN và hành vi browser trên mọi thiết bị. Sau deploy phải smoke-test các luồng đó trước khi coi là go-live hoàn toàn.

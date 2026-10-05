@@ -1,119 +1,108 @@
 # Xanh Sky First — Production Source
 
-Production source cho **Xanh Sky First** tại `https://xanh.skyfirst.io.vn`. Hệ thống được thiết kế như một cổng thông tin + nền tảng hoạt động + CMS quản trị, không phải landing page tĩnh. Người quản trị vận hành nội dung bằng giao diện **Xanh Sky First Management Center**, dùng Media Library, block editor, page builder và workflow quản trị thay vì sửa HTML/code hằng ngày. Yêu cầu này bám theo MASTER SPEC: upload-first, không bắt nhập URL ảnh, quản lý dự án/hoạt động/cơ hội/đăng ký/impact và dữ liệu thật thay vì số liệu dựng. 
+Source production cho `https://xanh.skyfirst.io.vn`, dùng Cloudflare Pages Functions + D1 + R2. Bản này tiếp tục trực tiếp trên source hiện có, giữ nguyên kiến trúc và bổ sung các phần còn thiếu của Management Center thay vì dựng một project mới.
 
-## Hạ tầng đã cấu hình
+## Hạ tầng
 
-- Domain: `xanh.skyfirst.io.vn`
-- Cloudflare D1 binding: `DB`
-- D1 database: `xanh`
+- D1 binding: `DB` → database `xanh`
 - D1 database ID: `6445b394-1588-4ef0-b22d-d2e312cfa596`
-- Cloudflare R2 binding: `STORAGE`
-- R2 bucket: `xanh`
-- Trang tĩnh: `public/`
-- Backend: Cloudflare Pages Functions trong `functions/`
+- R2 binding: `STORAGE` → bucket `xanh`
+- App URL: `https://xanh.skyfirst.io.vn`
+- Resend: `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_REPLY_TO`
+- First-time setup: `SETUP_SECRET`
 
-## Bảo mật mật khẩu — bắt buộc 100.000
+Không lưu API key/secret trong source hoặc ZIP.
 
-Toàn bộ password lifecycle dùng:
+## Mật khẩu
+
+Toàn bộ password lifecycle dùng `PBKDF2-SHA256` với **exactly 100000 iterations**. Giá trị được hard-pin trong `functions/_lib/crypto.js` và áp dụng cho setup, tạo user, login verify, đổi mật khẩu và reset mật khẩu.
+
+## Migrations
+
+Chạy theo thứ tự:
 
 ```text
-PBKDF2-SHA256
-Iterations: 100000
+0001_initial.sql
+0002_people_forms.sql
+0003_production_hardening.sql
 ```
 
-Giá trị được hard-pin trong `functions/_lib/crypto.js`. Không có fallback mức iteration cũ vượt 100000. Áp dụng cho First-time Setup, tạo tài khoản quản trị, đổi mật khẩu, reset mật khẩu và verify password. `npm test` và `npm run check` đều kiểm tra quy tắc này.
+`0003` bổ sung content revisions, form upload riêng tư, timeline hồ sơ và các trang pháp lý CMS. Không sửa lịch sử migration đã có.
 
-## Triển khai
-
-1. Cài dependency:
+Cloudflare CLI:
 
 ```bash
 npm install
-```
-
-2. Chạy migrations lên D1 production:
-
-```bash
 npm run db:remote
 ```
 
-3. Tạo secrets trực tiếp trên Cloudflare. Không ghi secret vào source/ZIP:
+Hoặc chạy từng migration trong D1 Console theo đúng thứ tự nếu đang quản lý database thủ công.
 
-```bash
-npx wrangler secret put SETUP_SECRET
-npx wrangler secret put RESEND_API_KEY
-```
+## First-time Setup
 
-`RESEND_API_KEY` là tùy chọn nếu chưa dùng email transactional; `SETUP_SECRET` là bắt buộc trước khi tạo Root Admin.
+Truy cập `/setup`. Backend chỉ cho tạo Root Admin khi database chưa có Root Admin. Sau khi tạo thành công, endpoint setup tự khóa. Không tạo Root Admin bằng SQL nếu không có lý do phục hồi hệ thống được kiểm soát.
 
-4. Kiểm tra source:
+## Management Center
+
+Truy cập `/admin` hoặc `/login`.
+
+Các module có UI thực:
+
+- Dashboard
+- Trang & Page Builder
+- Tin tức
+- Dự án
+- Hoạt động
+- Cơ hội
+- Sáng kiến
+- Tài nguyên
+- Con người Xanh
+- Form Builder
+- Hồ sơ trực tiếp + timeline
+- Media Library R2
+- Đơn đăng ký legacy
+- Impact
+- Liên hệ & Hợp tác
+- Newsletter
+- Users/Roles (Root Admin)
+- Audit Log
+- Settings
+
+### Con người Xanh
+
+`Thêm người / Chỉnh sửa người` có ảnh chân dung upload-first:
+
+1. Chọn ảnh từ Media Library hoặc tải ảnh từ máy.
+2. File được upload qua `/api/admin/media` vào R2 `xanh`.
+3. Metadata lưu trong `media`.
+4. Hồ sơ lưu `people.photo_media_id`.
+5. Admin đọc lại ảnh từ `/api/media/:id`.
+6. Public profile dùng `/con-nguoi/:slug`.
+7. `is_public` và `allow_index` được kiểm soát độc lập.
+
+Không yêu cầu quản trị viên nhập URL ảnh.
+
+### Form Builder
+
+Form Builder cho phép tạo/sửa form, thêm/đổi loại/nhân bản/xóa/sắp xếp field, required, options, deadline, capacity, cover, email xác nhận và yêu cầu consent. File upload của người gửi **không dùng bảng media công khai**; chúng được lưu trong `form_uploads`, R2 key riêng và chỉ tải về qua endpoint admin có kiểm tra quyền.
+
+## Media
+
+Allowlist hiện tại gồm JPEG, PNG, WebP, AVIF, GIF, SVG đã kiểm tra nội dung, PDF, TXT, CSV, DOCX, XLSX, PPTX, MP4 và WebM. Upload kiểm tra MIME, extension, một số file signatures và giới hạn 50 MB. Media Library hỗ trợ alt, caption, credit, focus point và ghi width/height khi trình duyệt đọc được kích thước ảnh.
+
+## Routes public
+
+Các route chính dùng pathname thật, hỗ trợ refresh/deep-link nhờ `public/_redirects`:
+
+`/gioi-thieu`, `/con-nguoi`, `/du-an`, `/hoat-dong`, `/co-hoi`, `/tai-nguyen`, `/tin-tuc`, `/sang-kien`, `/tham-gia`, `/lien-he`, `/quyen-rieng-tu`, `/dieu-khoan`, `/chinh-sach-du-lieu`, `/accessibility`, `/sitemap`.
+
+`/sitemap.xml` được sinh động từ dữ liệu public thực tế bằng Pages Function, bao gồm profile người chỉ khi `is_public=1` và `allow_index=1`.
+
+## Kiểm tra trước deploy
 
 ```bash
 npm test
 npm run check
 ```
 
-5. Deploy Pages theo project đã kết nối hoặc:
-
-```bash
-npm run deploy
-```
-
-6. Mở `https://xanh.skyfirst.io.vn/#login`. Nếu chưa có Root Admin, giao diện tự chuyển sang `#setup`. Nhập họ tên, email, mật khẩu và `SETUP_SECRET`. Sau khi tạo Root Admin thành công, setup bị khóa vì backend phát hiện hệ thống đã có Root Admin.
-
-## Media & ảnh
-
-Admin dùng **Tải lên / Chọn từ Media Library**. File được ghi vào R2 `xanh`; D1 chỉ lưu metadata/reference. API upload kiểm tra loại MIME, phần mở rộng, một số signature quan trọng, giới hạn 50 MB/file và chặn SVG có script/event handler/`javascript:`/`foreignObject`. CMS không bắt ảnh phải đúng một kích thước cố định; ảnh ngang, dọc, vuông và ảnh độ phân giải lớn được lưu bản gốc, còn cách trình bày do block/layout quyết định.
-
-Định dạng allowlist hiện tại: JPEG, PNG, WebP, AVIF, GIF, SVG an toàn, PDF, TXT, CSV, DOCX, XLSX, PPTX, MP4 và WebM. Không chấp nhận executable chỉ vì phần mở rộng được đổi tên.
-
-## Management Center
-
-Các khu vực chính đã có trong source:
-
-- Dashboard
-- Website CMS / Page Builder
-- Tin tức & bài viết
-- Dự án
-- Hoạt động & sự kiện
-- Cơ hội
-- Sáng kiến
-- Thư viện/tài nguyên
-- Media Library upload R2
-- Mini CRM đăng ký/TNV
-- Impact Data xác minh
-- Users/RBAC
-- Audit Log
-- Website/System Settings
-- Newsletter công khai
-- Contact routing
-- First-time Setup
-- Login, logout, đổi/reset password API
-
-## Dữ liệu tác động
-
-`/api/public/impact` chỉ tổng hợp `impact_records.verified = 1`. Nếu chưa có dữ liệu xác minh, website public không dựng số để nhìn đẹp. Các counter count-up chỉ xuất hiện khi có số lớn hơn 0.
-
-## Email routing
-
-Cài đặt mặc định trong migration:
-
-- Xanh: `xanh@skyfirst.io.vn`
-- Hợp tác: `hoptac@skyfirst.io.vn`
-- Truyền thông: `truyenthong@skyfirst.io.vn`
-- Hỗ trợ: `support@skyfirst.io.vn`
-- Hotline/Zalo: `0924 910 210`
-- Fanpage: `https://fb.com/xanhskyfirst`
-- Cộng đồng chung SFN: `https://fb.com/groups/sfn.network`
-
-Các trường này có thể sửa từ Settings sau đăng nhập.
-
-## Local development
-
-```bash
-npm run db:local
-npm run dev
-```
-
-Cloudflare local bindings cần được Wrangler khởi tạo. Không sử dụng production secrets trong máy dev nếu không cần thiết.
+Sau deploy cần smoke-test trên Cloudflare thật các phần phụ thuộc binding/secrets: R2 upload, D1 write/read, Resend, route deep-link và First-time Setup.

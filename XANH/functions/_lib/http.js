@@ -65,6 +65,12 @@ export function requireSameOrigin(request) {
   if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method)) return;
   const origin = request.headers.get('Origin');
   if (!origin) return;
-  const url = new URL(request.url);
-  if (new URL(origin).host !== url.host) throw new HttpError(403, 'Yêu cầu khác nguồn bị từ chối.');
+  try {
+    const url = new URL(request.url);
+    const source = new URL(origin);
+    if (source.protocol !== url.protocol || source.host !== url.host) throw new HttpError(403, 'Yêu cầu khác nguồn bị từ chối.');
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    throw new HttpError(403, 'Origin của yêu cầu không hợp lệ.');
+  }
 }

@@ -1,41 +1,33 @@
 # Security — Xanh Sky First
 
-## Password hashing
+## Passwords
 
-**Bắt buộc:** PBKDF2-SHA256, chính xác **100,000 iterations**. Không dùng mức iteration cũ vượt 100.000 trong bất kỳ đường code nào. Hash lưu theo format:
-
-`pbkdf2$sha256$100000$<salt-base64>$<hash-base64>`
-
-Verify từ chối hash có iteration khác 100,000 thay vì âm thầm chạy cost không được runtime hỗ trợ.
-
-## Secrets
-
-Không commit hoặc đóng gói `SETUP_SECRET`, `RESEND_API_KEY` hay credential khác. Đặt bằng Cloudflare secrets. Source chỉ tham chiếu `env.SETUP_SECRET` và `env.RESEND_API_KEY`.
+`PBKDF2-SHA256`, exactly `100000` iterations. Không có fallback cost khác. Password hash không được log hoặc trả ra API.
 
 ## Sessions
 
-Session token ngẫu nhiên 256-bit. D1 chỉ lưu SHA-256 của token. Cookie dùng `HttpOnly; Secure; SameSite=Lax`. Logout xóa session phía server. Đổi mật khẩu xóa các session khác của người dùng.
+Session token ngẫu nhiên chỉ lưu hash trong D1. Cookie: `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`. Đổi/reset mật khẩu thu hồi session liên quan.
 
-## Request protection
+## First-time Setup
 
-- Mutating requests kiểm tra same-origin khi header `Origin` hiện diện.
-- Login/setup/reset/contact/newsletter/apply có rate limiting bằng D1.
-- Backend RBAC kiểm tra quyền thật.
-- Dữ liệu hiển thị phía client được escape; rich content chỉ render block type cho phép.
-- Security headers được đặt trong `public/_headers` và JSON responses.
+`SETUP_SECRET` chỉ tồn tại dưới dạng Cloudflare secret. Setup kiểm tra chưa tồn tại Root Admin trước khi tạo và khóa sau lần khởi tạo đầu tiên.
 
-## Upload security
+## RBAC
 
-- Allowlist MIME + extension.
-- Kiểm tra signature với JPEG/PNG/GIF/WebP/PDF/OOXML.
-- SVG được reject nếu phát hiện `script`, inline event handler, `javascript:` hoặc `foreignObject`.
-- Giới hạn 50 MB/file.
-- R2 object key do server tạo, không tin filename do client cung cấp.
+Quyền được kiểm tra tại backend API. Menu Admin chỉ là lớp UX, không phải biện pháp bảo mật. Root Admin quản lý user/role. Viewer chỉ đọc dashboard/audit. Content Editor và Project Manager bị giới hạn theo content type. Volunteer Coordinator chỉ xử lý form/hồ sơ/đăng ký theo phạm vi được cấp.
 
-## First-time setup
+## Uploads
 
-Setup chỉ được phép khi chưa tồn tại user `root_admin`, đồng thời bắt buộc `SETUP_SECRET`. Khi Root Admin đã tồn tại, endpoint setup trả conflict và không tạo thêm Root Admin qua quy trình first-run.
+Media upload và form upload kiểm tra size, MIME, extension và chữ ký cho các định dạng quan trọng. SVG bị chặn nếu chứa script, event handler, `javascript:` hoặc `foreignObject`. Form uploads của người dùng được lưu trong bảng `form_uploads`, không đưa vào Media Library public và chỉ download qua endpoint admin đã xác thực.
 
-## Audit
+## CSRF / Origin
 
-Các thao tác setup, login/logout, password changes, page/content/media/settings/user/application/impact quan trọng được ghi Audit Log.
+Unsafe methods sử dụng same-origin checks và session cookie `SameSite=Lax`. Không cho phép cross-origin form/API mutation theo cấu hình hiện tại.
+
+## Rate limiting
+
+Các luồng login, setup, reset password, contact, newsletter, public form submit và public form upload có rate limit lưu trong D1 theo hash IP/window.
+
+## Secrets
+
+Không commit `SETUP_SECRET` hoặc `RESEND_API_KEY`. Cấu hình chúng trực tiếp trên Cloudflare. `EMAIL_FROM`, `EMAIL_REPLY_TO`, `APP_URL` là biến môi trường không bí mật nhưng vẫn nên quản lý tập trung.

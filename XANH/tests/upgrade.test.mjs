@@ -38,3 +38,13 @@ test('dynamic sitemap function includes indexable people and public content',asy
   assert.ok(s.includes('allow_index=1'));
   assert.ok(s.includes("status IN ('published','open','completed')"));
 });
+
+test('Xanh lookup, certificate handoff, seeded Hanoi volunteer form and destructive admin deletes are wired',async()=>{
+  const [app,api,seed]=await Promise.all([read('public/app.js'),read('functions/api/[[path]].js'),read('migrations/0004_seed_hanoi_volunteer_form.sql')]);
+  for(const marker of ["'/tra-cuu'",'submission-lookup','https://ctt.skyfirst.io.vn/#lookup','delete-form','delete-submission']) assert.ok(app.includes(marker));
+  assert.ok(api.includes("action === 'submission-lookup'"));
+  assert.ok(api.includes("form.delete"));
+  assert.ok(api.includes("submission.delete"));
+  assert.ok(seed.includes('XANH SKY FIRST TUYỂN TÌNH NGUYỆN VIÊN LÂU DÀI TẠI HÀ NỘI'));
+  assert.ok(seed.includes("'open'"));
+});

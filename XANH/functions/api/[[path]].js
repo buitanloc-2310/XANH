@@ -158,7 +158,7 @@ async function handleAuth(env, request, action) {
 }
 
 function sanitizeFields(input) {
-  const allowed = new Set(['text','email','phone','textarea','select','radio','checkbox','date','number','file','consent','section']);
+  const allowed = new Set(['text','email','phone','url','textarea','select','radio','checkbox','date','time','datetime','number','rating','file','signature','consent','section']);
   const fields = Array.isArray(input) ? input.slice(0,80) : [];
   return fields.map((f, i) => {
     const type = allowed.has(String(f?.type||'')) ? String(f.type) : 'text';
@@ -171,7 +171,10 @@ function sanitizeFields(input) {
       description: cleanText(f?.description, 500),
       required: type==='section' ? false : bool(f?.required),
       options,
-      accept: type==='file' ? cleanText(f?.accept || 'image/*,.pdf,.docx,.xlsx,.pptx,.txt,.csv', 300) : undefined,
+      accept: type==='file' ? cleanText(f?.accept || 'image/*,.pdf,.docx,.xlsx,.pptx,.txt,.csv', 300) : (type==='signature' ? 'image/png' : undefined),
+      placeholder: cleanText(f?.placeholder, 180),
+      min: Number.isFinite(Number(f?.min)) ? Number(f.min) : undefined,
+      max: Number.isFinite(Number(f?.max)) ? Number(f.max) : undefined,
       conditional: f?.conditional && typeof f.conditional==='object' ? f.conditional : undefined,
     };
   });
@@ -204,7 +207,7 @@ function validateSubmissionAnswers(fields, answers) {
   for (const f of fields) {
     if (f.type==='section') continue;
     const raw = a[f.id];
-    if (f.type==='file') {
+    if (f.type==='file' || f.type==='signature') {
       if (f.required) assert(raw && typeof raw==='object' && raw.upload_token,400,`Vui lòng tải tệp cho “${f.label}”.`);
       if (raw && typeof raw==='object') clean[f.id]={upload_token:cleanText(raw.upload_token,200),filename:cleanText(raw.filename,240)};
       continue;
@@ -222,6 +225,8 @@ function validateSubmissionAnswers(fields, answers) {
     const v=cleanText(raw, f.type==='textarea'?8000:1000);
     if (f.required) assert(v.length>0,400,`Vui lòng điền “${f.label}”.`);
     if (f.type==='email' && v) assert(validEmail(v),400,`Email tại “${f.label}” chưa hợp lệ.`);
+    if (f.type==='url' && v) { try { const uu=new URL(v); assert(['http:','https:'].includes(uu.protocol),400,`Liên kết tại “${f.label}” chưa hợp lệ.`); } catch { throw new HttpError(400,`Liên kết tại “${f.label}” chưa hợp lệ.`); } }
+    if (['number','rating'].includes(f.type) && v) { const num=Number(v); assert(Number.isFinite(num),400,`Giá trị tại “${f.label}” chưa hợp lệ.`); if(f.min!==undefined) assert(num>=f.min,400,`Giá trị tại “${f.label}” nhỏ hơn mức cho phép.`); if(f.max!==undefined) assert(num<=f.max,400,`Giá trị tại “${f.label}” vượt mức cho phép.`); }
     if (['select','radio'].includes(f.type) && v && f.options?.length) assert(f.options.includes(v),400,`Giá trị “${f.label}” không hợp lệ.`);
     clean[f.id]=v;
   }
@@ -301,7 +306,7 @@ async function handlePublic(env, request, action) {
     const ct=request.headers.get('content-type')||''; assert(ct.includes('multipart/form-data'),415,'Upload phải dùng multipart/form-data.');
     const fd=await request.formData(), formId=Number(fd.get('form_id')), fieldId=cleanText(fd.get('field_id'),120), file=fd.get('file');
     const form=await env.DB.prepare(`SELECT id,status,opens_at,closes_at,fields_json FROM forms WHERE id=?`).bind(formId).first(); assert(form&&form.status==='open',404,'Biểu mẫu chưa mở hoặc không tồn tại.');
-    const uploadField=sanitizeFields(asJson(form.fields_json,[])).find(x=>x.id===fieldId&&x.type==='file'); assert(uploadField,400,'Trường upload không hợp lệ.');
+    const uploadField=sanitizeFields(asJson(form.fields_json,[])).find(x=>x.id===fieldId&&['file','signature'].includes(x.type)); assert(uploadField,400,'Trường upload không hợp lệ.');
     if(form.opens_at) assert(new Date(form.opens_at)<=new Date(),409,'Biểu mẫu chưa đến thời gian mở.');
     if(form.closes_at) assert(new Date(form.closes_at)>new Date(),409,'Biểu mẫu đã hết hạn.');
     const v=await validateUpload(file), token=randomToken(24), tokenHash=await sha256Hex(token), key=`form-uploads/${formId}/${crypto.randomUUID()}.${v.ext}`;
@@ -320,7 +325,7 @@ async function handlePublic(env, request, action) {
     const answers=validateSubmissionAnswers(fields,b.answers||{});
     if(settings.require_guardian_consent) assert(bool(b.guardian_consent),400,'Biểu mẫu này yêu cầu xác nhận đồng ý phù hợp đối với người chưa thành niên.');
     const claimedUploads=[];
-    for(const f of fields.filter(x=>x.type==='file')){
+    for(const f of fields.filter(x=>['file','signature'].includes(x.type))){
       const a=answers[f.id]; if(!a?.upload_token) continue;
       const th=await sha256Hex(a.upload_token);
       const up=await env.DB.prepare(`SELECT id FROM form_uploads WHERE form_id=? AND upload_token_hash=? AND claimed_submission_id IS NULL`).bind(form.id,th).first();

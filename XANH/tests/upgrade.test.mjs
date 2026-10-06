@@ -48,3 +48,15 @@ test('Xanh lookup, certificate handoff, seeded Hanoi volunteer form and destruct
   assert.ok(seed.includes('XANH SKY FIRST TUYỂN TÌNH NGUYỆN VIÊN LÂU DÀI TẠI HÀ NỘI'));
   assert.ok(seed.includes("'open'"));
 });
+
+test('public form is rendered only from Form Builder fields',async()=>{
+  const [app,api,seed,upgrade]=await Promise.all([
+    read('public/app.js'),read('functions/api/[[path]].js'),read('migrations/0004_seed_hanoi_volunteer_form.sql'),read('migrations/0005_form_builder_single_source.sql')
+  ]);
+  assert.ok(!app.includes('<label>Họ và tên<input name="full_name" required></label>'));
+  assert.ok(!app.includes("full_name:f.get('full_name')"));
+  assert.ok(app.includes("${(f.fields||[]).map(fieldHtml).join('')}"));
+  for(const id of ['full_name','email','phone']) assert.ok(seed.includes(`\\\"id\\\":\\\"${id}\\\"`) || seed.includes(`\"id\":\"${id}\"`));
+  assert.ok(api.includes('Form Builder is the single source of truth'));
+  assert.ok(upgrade.includes("json_array_length(fields_json)=15"));
+});

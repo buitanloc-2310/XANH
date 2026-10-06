@@ -326,11 +326,21 @@ async function handlePublic(env, request, action) {
     await rateLimit(env,request,'form-submit',10,3600); const b=await readJson(request); const form=await env.DB.prepare(`SELECT * FROM forms WHERE id=? AND status='open'`).bind(Number(b.form_id)).first(); assert(form,404,'Biểu mẫu chưa mở hoặc không tồn tại.');
     const settings=sanitizeFormSettings(asJson(form.settings_json,{}));
     const fields=sanitizeFields(asJson(form.fields_json,[]));
-    const name=cleanText(b.full_name,120),email=cleanText(b.email,200).toLowerCase(),phone=cleanText(b.phone,40); assert(name.length>=2&&validEmail(email),400,'Thông tin người đăng ký chưa hợp lệ.');
+
     if(form.opens_at) assert(new Date(form.opens_at)<=new Date(),409,'Biểu mẫu chưa đến thời gian mở.');
     if(form.closes_at) assert(new Date(form.closes_at)>new Date(),409,settings.closed_message);
     if(form.capacity){const c=await env.DB.prepare(`SELECT COUNT(*) c FROM form_submissions WHERE form_id=?`).bind(form.id).first();assert(Number(c.c)<Number(form.capacity),409,'Biểu mẫu đã đủ số lượng.');}
     const answers=validateSubmissionAnswers(fields,b.answers||{});
+    // Form Builder is the single source of truth: no hidden/hard-coded identity fields.
+    // These three columns are only searchable metadata extracted from configured answers when present.
+    const findAnswer=(preferredIds,type)=>{
+      for(const id of preferredIds){const v=answers[id];if(typeof v==='string'&&v.trim())return v;}
+      const f=fields.find(x=>x.type===type&&typeof answers[x.id]==='string'&&answers[x.id].trim());
+      return f?answers[f.id]:'';
+    };
+    const name=cleanText(findAnswer(['full_name','name','ho_ten'],'text'),120);
+    const email=cleanText(findAnswer(['email'],'email'),200).toLowerCase();
+    const phone=cleanText(findAnswer(['phone','phone_zalo','sdt'],'phone'),40);
     if(settings.require_guardian_consent) assert(bool(b.guardian_consent),400,'Biểu mẫu này yêu cầu xác nhận đồng ý phù hợp đối với người chưa thành niên.');
     const claimedUploads=[];
     for(const f of fields.filter(x=>['file','signature'].includes(x.type))){
@@ -346,7 +356,7 @@ async function handlePublic(env, request, action) {
     for(const uploadId of claimedUploads) await env.DB.prepare(`UPDATE form_uploads SET claimed_submission_id=? WHERE id=? AND claimed_submission_id IS NULL`).bind(sid,uploadId).run();
     await env.DB.prepare(`INSERT INTO submission_events(submission_id,event_type,new_status,note,created_at) VALUES(?,'created','new','Hồ sơ được gửi từ website',?)`).bind(sid,t).run();
     let emailSent=false;
-    if(settings.confirmation_email){const m=await sendMail(env,{to:email,subject:`Xác nhận hồ sơ ${code} · Xanh Sky First`,html:`<p>Xin chào ${escapeHtml(name)},</p><p>Xanh Sky First đã nhận hồ sơ của bạn cho <b>${escapeHtml(form.name)}</b>.</p><p>Mã hồ sơ: <b>${code}</b></p><p>${escapeHtml(settings.confirmation_message)}</p>`}); emailSent=!!m.sent;}
+    if(settings.confirmation_email&&validEmail(email)){const m=await sendMail(env,{to:email,subject:`Xác nhận hồ sơ ${code} · Xanh Sky First`,html:`<p>Xin chào ${escapeHtml(name)},</p><p>Xanh Sky First đã nhận hồ sơ của bạn cho <b>${escapeHtml(form.name)}</b>.</p><p>Mã hồ sơ: <b>${code}</b></p><p>${escapeHtml(settings.confirmation_message)}</p>`}); emailSent=!!m.sent;}
     if(emailSent) await env.DB.prepare(`UPDATE submission_events SET email_sent=1 WHERE submission_id=? AND event_type='created'`).bind(sid).run();
     return json({ok:true,code,message:settings.confirmation_message,title:settings.confirmation_title},201);
   }

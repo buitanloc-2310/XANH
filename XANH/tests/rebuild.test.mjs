@@ -29,10 +29,14 @@ test('Navigation Manager and homepage preview are wired to admin endpoints', asy
 test('public counters show a placeholder without verified data and can be timed', async () => {
   const app = await read('public/app.js');
   const api = await read('functions/api/[[path]].js');
-  assert.ok(app.includes("c.value===null||c.enabled===false?'—':'0'"));
+  assert.ok(app.includes("c.value!==null&&c.enabled!==false"));
+  assert.ok(app.includes('metric-source'));
+  assert.ok(app.includes('unit_suffix'));
   assert.ok(app.includes('data-duration'));
   assert.ok(app.includes('data-delay'));
   assert.ok(api.includes('verifiedCount>0?Number(sourceValues[c.metric_key]||0):null'));
+  assert.ok(api.includes("c.value_mode==='manual'"));
+  assert.ok(api.includes('Số liệu do quản trị viên nhập'));
 });
 
 test('newsletter has a backend unsubscribe route and email link', async () => {

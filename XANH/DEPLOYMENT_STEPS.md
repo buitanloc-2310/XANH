@@ -64,3 +64,16 @@ Thực hiện theo thứ tự:
 10. Kiểm tra mobile thực tế trước khi go-live.
 
 Các mục cần Cloudflare/R2/D1/Resend thật không được coi là PASS chỉ dựa trên kiểm tra local; xem `FINAL_ACCEPTANCE.md`.
+
+## Upgrade 0006 — Navigation, Impact và nội dung CMS (2026-10)
+
+Migration mới `migrations/0006_navigation_impact_content.sql` bổ sung trường `waste_tons` và `community_reached` cho impact đã ghi nhận, cấu hình bộ đếm, cấu hình menu đầu trang/chân trang và các trang nội dung dựng sẵn. Migration giữ nguyên bản ghi hiện có bằng `INSERT OR IGNORE`; không sửa các migration cũ.
+
+Trước khi nâng cấp production, sao lưu D1 và thử trên database/staging. Cách khuyến nghị để bảo đảm Wrangler ghi nhận lịch sử migration:
+
+```bash
+npx wrangler d1 migrations list xanh --remote
+npx wrangler d1 migrations apply xanh --remote
+```
+
+Nếu chạy bằng SQL Console của Cloudflare, chỉ chạy nội dung `0006_navigation_impact_content.sql` một lần. Không đồng thời chạy lại lệnh apply migration trên cùng database sau khi đã dán SQL thủ công, vì hai câu `ALTER TABLE` không thể chạy lặp. Sau khi cập nhật, kiểm tra `/api/public/site`, `/api/public/impact`, đăng nhập Management Center, mở `Menu đầu trang & chân trang`, `Trang & Page Builder`, `Impact` và thử các biểu mẫu trên staging.

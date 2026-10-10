@@ -87,7 +87,11 @@ async function handleSetup(env, request) {
   assert(password.length >= 10, 400, 'Mật khẩu phải có ít nhất 10 ký tự.');
   const hash = await hashPassword(password);
   const t = now();
-  const r = await env.DB.prepare(`INSERT INTO users(name,email,password_hash,role,status,created_at,updated_at) VALUES(?,?,?,'root_admin','active',?,?)`).bind(name,email,hash,t,t).run();
+  // Atomic first-admin claim: the predicate is checked inside the same INSERT statement,
+  // so concurrent setup requests cannot both pass a preflight count.
+  const r = await env.DB.prepare(`INSERT INTO users(name,email,password_hash,role,status,created_at,updated_at)
+    SELECT ?,?,?,'root_admin','active',?,? WHERE NOT EXISTS (SELECT 1 FROM users WHERE role='root_admin')`).bind(name,email,hash,t,t).run();
+  assert(Number(r.meta?.changes||0)===1,409,'Hệ thống đã được khởi tạo. Setup đã bị khóa.');
   const id = r.meta.last_row_id;
   await audit(env,id,'setup.initialize','system','root_admin',{pbkdf2_iterations:PBKDF2_ITERATIONS},request);
   const user = { id, name, email, role:'root_admin', status:'active' };
@@ -237,15 +241,28 @@ async function handlePublic(env, request, action) {
   const u=new URL(request.url);
   await publishDueContent(env);
   if (action === 'site' && request.method==='GET') {
-    const settings=await settingsGet(env);
+    const [settings,navigation]=await Promise.all([settingsGet(env),settingsGet(env,'navigation')]);
     const page=await env.DB.prepare(`SELECT * FROM pages WHERE slug='home' AND status='published'`).first();
-    return json({ok:true,settings,page:pageOut(page)});
+    return json({ok:true,settings,navigation,page:pageOut(page)});
   }
   if (action === 'page' && request.method==='GET') {
     const slug=safeSlug(u.searchParams.get('slug'));
     const row=await env.DB.prepare(`SELECT * FROM pages WHERE slug=? AND status='published' LIMIT 1`).bind(slug).first();
     assert(row,404,'Không tìm thấy trang.');
     return json({ok:true,item:pageOut(row)});
+  }
+  if (action === 'search' && request.method==='GET') {
+    const q=cleanText(u.searchParams.get('q'),120); assert(q.length>=1,400,'Nhập từ khóa tìm kiếm.');
+    const like=`%${q}%`;
+    const [pages,items]=await Promise.all([
+      env.DB.prepare(`SELECT slug,title,blocks_json,updated_at FROM pages WHERE status='published' AND slug<>'home' AND (title LIKE ? OR blocks_json LIKE ?) ORDER BY updated_at DESC LIMIT 30`).bind(like,like).all(),
+      env.DB.prepare(`SELECT type,slug,title,excerpt,updated_at FROM content_items WHERE status IN ('published','open','completed') AND (title LIKE ? OR excerpt LIKE ? OR body_json LIKE ?) ORDER BY COALESCE(published_at,created_at) DESC LIMIT 50`).bind(like,like,like).all()
+    ]);
+    const pageResults=pages.results.map(x=>({title:x.title,excerpt:asJson(x.blocks_json,[]).filter(b=>b.type==='paragraph').map(b=>b.text).join(' ').slice(0,180),href:['gioi-thieu'].includes(x.slug)?'/gioi-thieu':`/noi-dung/${x.slug}`,type_label:'Trang'}));
+    const bases={article:'tin-tuc',project:'du-an',activity:'hoat-dong',opportunity:'co-hoi',resource:'tai-nguyen',initiative:'sang-kien'};
+    const contentResults=items.results.map(x=>({title:x.title,excerpt:x.excerpt,href:`/${bases[x.type]||x.type}/${x.slug}`,type_label:({article:'Tin tức',project:'Dự án',activity:'Hoạt động',opportunity:'Cơ hội',resource:'Tài nguyên',initiative:'Sáng kiến'})[x.type]||'Nội dung'}));
+    const merged=[...pageResults,...contentResults].filter((x,i,a)=>a.findIndex(y=>y.href===x.href)===i).slice(0,60);
+    return json({ok:true,items:merged});
   }
   if (action === 'content' && request.method==='GET') {
     const type=cleanText(u.searchParams.get('type'),30); assert(CONTENT_TYPES.has(type),400,'Loại nội dung không hợp lệ.');
@@ -258,8 +275,21 @@ async function handlePublic(env, request, action) {
     assert(row,404,'Không tìm thấy nội dung.'); return json({ok:true,item:contentOut(row)});
   }
   if (action === 'impact' && request.method==='GET') {
-    const r=await env.DB.prepare(`SELECT COUNT(DISTINCT CASE WHEN verified=1 AND completed=1 AND locality<>'' THEN locality END) AS localities, COALESCE(SUM(CASE WHEN verified=1 THEN confirmed_participants ELSE 0 END),0) AS participants, COALESCE(SUM(CASE WHEN verified=1 AND completed=1 THEN 1 ELSE 0 END),0) AS completed_activities, COALESCE(SUM(CASE WHEN verified=1 THEN volunteer_hours ELSE 0 END),0) AS volunteer_hours FROM impact_records`).first();
-    return json({ok:true,impact:{localities:Number(r.localities||0),participants:Number(r.participants||0),completed_activities:Number(r.completed_activities||0),volunteer_hours:Number(r.volunteer_hours||0)}},200,{'Cache-Control':'public, max-age=300'});
+    const [r,cfgRows]=await Promise.all([
+      env.DB.prepare(`SELECT COUNT(DISTINCT CASE WHEN verified=1 AND completed=1 AND locality<>'' THEN locality END) AS localities,
+        COALESCE(SUM(CASE WHEN verified=1 THEN confirmed_participants ELSE 0 END),0) AS participants,
+        COALESCE(SUM(CASE WHEN verified=1 AND completed=1 THEN 1 ELSE 0 END),0) AS completed_activities,
+        COALESCE(SUM(CASE WHEN verified=1 THEN volunteer_hours ELSE 0 END),0) AS volunteer_hours,
+        COALESCE(SUM(CASE WHEN verified=1 THEN waste_tons ELSE 0 END),0) AS waste_tons,
+        COALESCE(SUM(CASE WHEN verified=1 THEN community_reached ELSE 0 END),0) AS community_reached,
+        SUM(CASE WHEN verified=1 THEN 1 ELSE 0 END) AS verified_records FROM impact_records`).first(),
+      env.DB.prepare(`SELECT * FROM impact_counter_config ORDER BY sort_order,metric_key`).all(),
+    ]);
+    const impact={localities:Number(r.localities||0),participants:Number(r.participants||0),completed_activities:Number(r.completed_activities||0),volunteer_hours:Number(r.volunteer_hours||0),waste_tons:Number(r.waste_tons||0),community_reached:Number(r.community_reached||0)};
+    const verifiedCount=Number(r.verified_records||0);
+    const sourceValues={participants:impact.participants,completed_activities:impact.completed_activities,waste_tons:impact.waste_tons,community_reached:impact.community_reached};
+    const counters=(cfgRows.results||[]).map(c=>({...c,value:verifiedCount>0?Number(sourceValues[c.metric_key]||0):null,duration_ms:Math.min(12000,Math.max(300,Number(c.duration_ms||1800))),delay_ms:Math.min(5000,Math.max(0,Number(c.delay_ms||0))),hold_ms:Math.min(60000,Math.max(0,Number(c.hold_ms||0))),enabled:Number(c.enabled)===1}));
+    return json({ok:true,impact,counters},200,{'Cache-Control':'no-store'});
   }
   if (action === 'contact' && request.method==='POST') {
     await rateLimit(env,request,'contact',8,3600); const b=await readJson(request);
@@ -275,13 +305,22 @@ async function handlePublic(env, request, action) {
     const prefs=Array.isArray(b.preferences)?b.preferences.map(x=>cleanText(x,50)).slice(0,10):[]; const verify=randomToken(24), unsubscribe=randomToken(24); const vh=await sha256Hex(verify), uh=await sha256Hex(unsubscribe), t=now();
     await env.DB.prepare(`INSERT INTO newsletter_subscribers(email,preferences_json,status,verify_token_hash,unsubscribe_token_hash,created_at,updated_at) VALUES(?,?,'pending',?,?,?,?) ON CONFLICT(email) DO UPDATE SET preferences_json=excluded.preferences_json,status='pending',verify_token_hash=excluded.verify_token_hash,unsubscribe_token_hash=excluded.unsubscribe_token_hash,updated_at=excluded.updated_at`).bind(email,JSON.stringify(prefs),vh,uh,t,t).run();
     const origin=env.APP_URL || new URL(request.url).origin; const link=`${origin}/api/public/newsletter-verify?token=${encodeURIComponent(verify)}&email=${encodeURIComponent(email)}`;
-    await sendMail(env,{to:email,subject:'Xác nhận nhận newsletter Xanh Sky First',html:`<p>Vui lòng xác nhận đăng ký newsletter:</p><p><a href="${link}">Xác nhận email</a></p>`});
+    const unsubscribeLink=`${origin}/api/public/newsletter-unsubscribe?token=${encodeURIComponent(unsubscribe)}&email=${encodeURIComponent(email)}`;
+    await sendMail(env,{to:email,subject:'Xác nhận nhận newsletter Xanh Sky First',html:`<p>Vui lòng xác nhận đăng ký newsletter:</p><p><a href="${link}">Xác nhận email</a></p><p>Nếu bạn không muốn nhận nội dung này, có thể <a href="${unsubscribeLink}">hủy đăng ký</a>.</p>`});
     return json({ok:true,message:'Vui lòng kiểm tra email để xác nhận đăng ký.'},201);
   }
   if (action === 'newsletter-verify' && request.method==='GET') {
     const email=cleanText(u.searchParams.get('email'),200).toLowerCase(), token=String(u.searchParams.get('token')||''), th=await sha256Hex(token);
     const r=await env.DB.prepare(`UPDATE newsletter_subscribers SET status='active',verify_token_hash=NULL,updated_at=? WHERE email=? AND verify_token_hash=?`).bind(now(),email,th).run();
     return new Response((r.meta.changes||0)>0?'Đã xác nhận newsletter Xanh Sky First.':'Liên kết xác nhận không hợp lệ.',{status:(r.meta.changes||0)>0?200:400,headers:{'Content-Type':'text/plain; charset=utf-8'}});
+  }
+  if (action === 'newsletter-unsubscribe' && request.method==='GET') {
+    const email=cleanText(u.searchParams.get('email'),200).toLowerCase(), token=String(u.searchParams.get('token')||'');
+    assert(validEmail(email)&&token.length>=20,400,'Liên kết hủy đăng ký không hợp lệ.');
+    const th=await sha256Hex(token);
+    const r=await env.DB.prepare(`UPDATE newsletter_subscribers SET status='unsubscribed',verify_token_hash=NULL,updated_at=? WHERE email=? AND unsubscribe_token_hash=?`).bind(now(),email,th).run();
+    const ok=Number(r.meta?.changes||0)>0;
+    return new Response(ok?'Bạn đã hủy đăng ký newsletter Xanh Sky First. Email này sẽ không còn nhận nội dung newsletter.':'Liên kết hủy đăng ký không hợp lệ hoặc đã được sử dụng.',{status:ok?200:400,headers:{'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-store'}});
   }
   if (action === 'people' && request.method==='GET') {
     const rows=await env.DB.prepare(`SELECT p.id,p.slug,p.name,p.title,p.role_group,p.bio,p.expertise,p.photo_media_id,p.links_json,p.seo_json,m.alt_text AS photo_alt,m.focus_x AS photo_focus_x,m.focus_y AS photo_focus_y FROM people p LEFT JOIN media m ON m.id=p.photo_media_id WHERE p.is_public=1 ORDER BY p.sort_order,p.name`).all();
@@ -394,10 +433,50 @@ async function saveContentRevision(env, old, userId) {
   await env.DB.prepare(`INSERT INTO content_revisions(content_id,snapshot_json,created_by,created_at) VALUES(?,?,?,?)`).bind(old.id,JSON.stringify(snapshot),userId,now()).run();
 }
 
+
+function sanitizeNavigation(input) {
+  const x=input&&typeof input==='object'?input:{};
+  const href=(v)=>{const h=cleanText(v,500);if(!h)return '/';const internal=h.startsWith('/')&&!h.startsWith('//');assert(internal||/^https?:\/\//i.test(h)||/^mailto:/i.test(h),400,'Liên kết menu chỉ được dùng đường dẫn nội bộ, HTTP(S) hoặc mailto; không dùng URL bắt đầu bằng // .');return h;};
+  const asset=(v)=>{const h=cleanText(v||'/assets/xanh-sky-first-logo.png',500);assert((h.startsWith('/')&&!h.startsWith('//'))||/^https?:\/\//i.test(h),400,'Logo phải là đường dẫn nội bộ hoặc URL HTTP(S) hợp lệ.');return h;};
+  const cleanItem=(it,i)=>({
+    id:safeSlug(it?.id||it?.label||`menu-${i+1}`)||`menu-${i+1}`,
+    label:cleanText(it?.label||`Mục ${i+1}`,80),href:href(it?.href),visible:it?.visible!==false,
+    open_new_tab:bool(it?.open_new_tab),icon:cleanText(it?.icon||'',24),
+    children:(Array.isArray(it?.children)?it.children:[]).slice(0,20).map((ch,j)=>({id:safeSlug(ch?.id||ch?.label||`item-${j+1}`)||`item-${j+1}`,label:cleanText(ch?.label||`Mục con ${j+1}`,80),href:href(ch?.href),visible:ch?.visible!==false,open_new_tab:bool(ch?.open_new_tab),icon:cleanText(ch?.icon||'',24)}))
+  });
+  const items=(Array.isArray(x.items)?x.items:[]).slice(0,20).map(cleanItem).filter(it=>it.label);
+  const top=x.topbar&&typeof x.topbar==='object'?x.topbar:{};
+  const footerCols=(Array.isArray(x.footer_columns)?x.footer_columns:[]).slice(0,5).map((c,i)=>({title:cleanText(c?.title||`Cột ${i+1}`,100),items:(Array.isArray(c?.items)?c.items:[]).slice(0,15).map((it,j)=>({label:cleanText(it?.label||`Liên kết ${j+1}`,100),href:href(it?.href),open_new_tab:bool(it?.open_new_tab)}))}));
+  assert(items.length>0,400,'Menu phải có ít nhất một mục.');
+  return {version:1,topbar:{enabled:top.enabled!==false,tagline:cleanText(top.tagline,180),email:cleanText(top.email,200),hours:cleanText(top.hours,80),phone:cleanText(top.phone,80),address:cleanText(top.address,200)},brand_name:cleanText(x.brand_name||'XANH SKY FIRST',100),brand_description:cleanText(x.brand_description||'Môi trường · Cộng đồng · Công nghệ xanh',180),logo_url:asset(x.logo_url),cta_label:cleanText(x.cta_label||'Cùng hành động',80),cta_href:href(x.cta_href||'/tham-gia'),search_enabled:bool(x.search_enabled),items,footer_columns:footerCols};
+}
+
 async function handleAdmin(env, request, action, p) {
   requireSameOrigin(request);
   const user=await requireUser(env,request); const u=new URL(request.url), write=request.method!=='GET';
   assert(USER_ROLES.has(user.role),403,'Vai trò tài khoản không hợp lệ.');
+
+  if(action==='navigation') {
+    assert(ADMIN_ROLES.has(user.role),403,'Chỉ quản trị viên mới được quản lý menu đầu trang và chân trang.');
+    if(request.method==='GET') return json({ok:true,item:await settingsGet(env,'navigation')});
+    if(request.method==='PUT') { const b=await readJson(request),clean=sanitizeNavigation(b.item||b.navigation||b); await settingsSet(env,'navigation',clean); await audit(env,user.id,'navigation.publish','navigation','header-footer',{roots:clean.items.length},request); return json({ok:true,item:clean}); }
+  }
+  if(action==='impact-display') {
+    assert(ADMIN_ROLES.has(user.role)||user.role==='project_manager',403,'Bạn không có quyền cấu hình bộ đếm Impact.');
+    if(request.method==='GET'){const rows=await env.DB.prepare(`SELECT * FROM impact_counter_config ORDER BY sort_order,metric_key`).all();return json({ok:true,items:rows.results});}
+    if(request.method==='PUT'){
+      const b=await readJson(request),items=Array.isArray(b.items)?b.items:[];
+      const allowed=new Set(['participants','completed_activities','waste_tons','community_reached']);
+      assert(items.length===4&&items.every(x=>allowed.has(String(x.metric_key))),400,'Cấu hình phải bao gồm đúng bốn chỉ số Impact được hỗ trợ.');
+      const saved=[];for(const x of items){const key=String(x.metric_key),label=cleanText(x.label,100),description=cleanText(x.description,300),start=Math.max(0,Math.min(1000000000,Number(x.start_value||0))),duration=Math.max(300,Math.min(12000,Number(x.duration_ms||1800))),delay=Math.max(0,Math.min(5000,Number(x.delay_ms||0))),hold=Math.max(0,Math.min(60000,Number(x.hold_ms||0))),enabled=bool(x.enabled)?1:0,order=Math.max(0,Math.min(20,Number(x.sort_order||0)));
+        assert(label.length>=2,400,'Nhãn số liệu cần ít nhất 2 ký tự.');
+        await env.DB.prepare(`UPDATE impact_counter_config SET label=?,description=?,start_value=?,duration_ms=?,delay_ms=?,hold_ms=?,enabled=?,sort_order=?,updated_at=? WHERE metric_key=?`).bind(label,description,start,duration,delay,hold,enabled,order,now(),key).run();
+        saved.push(key);
+      }
+      await audit(env,user.id,'impact.counters.update','impact','counter-config',{metrics:saved},request);
+      const rows=await env.DB.prepare(`SELECT * FROM impact_counter_config ORDER BY sort_order,metric_key`).all();return json({ok:true,items:rows.results});
+    }
+  }
 
   if (action==='dashboard' && request.method==='GET') {
     requireFeature(user,'dashboard');
@@ -505,7 +584,7 @@ async function handleAdmin(env, request, action, p) {
   if(action==='impact'){
     requireFeature(user,'impact',write);
     if(request.method==='GET'){const rows=await env.DB.prepare(`SELECT i.*,c.title AS activity_title FROM impact_records i LEFT JOIN content_items c ON c.id=i.activity_id ORDER BY i.updated_at DESC`).all();const acts=await env.DB.prepare(`SELECT id,title FROM content_items WHERE type='activity' ORDER BY updated_at DESC LIMIT 300`).all();return json({ok:true,items:rows.results,activities:acts.results});}
-    if(request.method==='POST'){const b=await readJson(request),activityId=Number(b.activity_id);assert(activityId>0,400,'Activity ID không hợp lệ.');const t=now();await env.DB.prepare(`INSERT INTO impact_records(activity_id,locality,confirmed_participants,volunteer_hours,completed,verified,notes,verified_by,verified_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(activity_id) DO UPDATE SET locality=excluded.locality,confirmed_participants=excluded.confirmed_participants,volunteer_hours=excluded.volunteer_hours,completed=excluded.completed,verified=excluded.verified,notes=excluded.notes,verified_by=excluded.verified_by,verified_at=excluded.verified_at,updated_at=excluded.updated_at`).bind(activityId,cleanText(b.locality,160),Math.max(0,Number(b.confirmed_participants||0)),Math.max(0,Number(b.volunteer_hours||0)),bool(b.completed)?1:0,bool(b.verified)?1:0,cleanText(b.notes,3000),user.id,bool(b.verified)?t:null,t,t).run();await audit(env,user.id,'impact.upsert','activity',activityId,{verified:bool(b.verified)},request);return json({ok:true});}
+    if(request.method==='POST'){const b=await readJson(request),activityId=Number(b.activity_id);assert(activityId>0,400,'Activity ID không hợp lệ.');const participants=Number(b.confirmed_participants||0),hours=Number(b.volunteer_hours||0),waste=Number(b.waste_tons||0),community=Number(b.community_reached||0),verified=bool(b.verified),notes=cleanText(b.notes,3000);assert([participants,hours,waste,community].every(Number.isFinite),400,'Các chỉ số Impact phải là số hợp lệ.');assert(participants>=0&&participants<=100000000&&hours>=0&&hours<=100000000&&waste>=0&&waste<=1000000&&community>=0&&community<=100000000,400,'Một hoặc nhiều chỉ số Impact nằm ngoài giới hạn cho phép.');assert(!verified||notes.length>=10,400,'Muốn xác minh Impact, hãy ghi ít nhất 10 ký tự về căn cứ xác minh.');const t=now();await env.DB.prepare(`INSERT INTO impact_records(activity_id,locality,confirmed_participants,volunteer_hours,waste_tons,community_reached,completed,verified,notes,verified_by,verified_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(activity_id) DO UPDATE SET locality=excluded.locality,confirmed_participants=excluded.confirmed_participants,volunteer_hours=excluded.volunteer_hours,waste_tons=excluded.waste_tons,community_reached=excluded.community_reached,completed=excluded.completed,verified=excluded.verified,notes=excluded.notes,verified_by=excluded.verified_by,verified_at=excluded.verified_at,updated_at=excluded.updated_at`).bind(activityId,cleanText(b.locality,160),participants,hours,waste,community,bool(b.completed)?1:0,verified?1:0,notes,user.id,verified?t:null,t,t).run();await audit(env,user.id,'impact.upsert','activity',activityId,{verified,waste_tons:waste,community_reached:community},request);return json({ok:true});}
   }
 
   if(action==='audit' && request.method==='GET'){

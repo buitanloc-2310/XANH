@@ -9,11 +9,6 @@
       "database_name": "xanh",
       "database_id": "6445b394-1588-4ef0-b22d-d2e312cfa596",
       "migrations_dir": "./migrations"
-    },
-    {
-      "binding": "CTT_DB",
-      "database_name": "sfn-app-db",
-      "database_id": "a59afb69-f8fd-4c29-8afa-601d2cdfd1ed"
     }
   ],
   "r2_buckets": [

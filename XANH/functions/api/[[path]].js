@@ -54,151 +54,6 @@ async function settingsSet(env, key, value) {
   await env.DB.prepare(`INSERT INTO site_settings(key,value_json,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at`).bind(key, JSON.stringify(value || {}), now()).run();
 }
 
-const CTT_FORM_ID = 'xanh-sky-first-integration';
-const CTT_CASE_BASE = 'https://ctt.skyfirst.io.vn/ho-so';
-const CTT_STATUS_MAP = {
-  new: { status:'Đã tiếp nhận', label:'TIẾP NHẬN', note:'Hồ sơ đã được hệ thống ghi nhận.', next:'Theo dõi trạng thái hồ sơ và email đã đăng ký.', result:'' },
-  reviewing: { status:'Đang xem xét', label:'KIỂM TRA', note:'Hồ sơ đang được xem xét theo quy trình.', next:'Vui lòng theo dõi cập nhật trạng thái.', result:'' },
-  needs_info: { status:'Cần bổ sung thông tin', label:'CẦN BỔ SUNG', note:'Hồ sơ cần được bổ sung thông tin theo hướng dẫn của đơn vị tiếp nhận.', next:'Theo dõi email hoặc liên hệ kênh hỗ trợ chính thức để biết nội dung cần bổ sung.', result:'' },
-  approved: { status:'Đã duyệt', label:'XỬ LÝ', note:'Hồ sơ đã được duyệt.', next:'Theo dõi hướng dẫn tiếp theo của chương trình nếu có.', result:'Hồ sơ đã được duyệt.' },
-  rejected: { status:'Không phù hợp', label:'XỬ LÝ', note:'Kết quả xử lý hồ sơ đã được cập nhật.', next:'Liên hệ đơn vị tiếp nhận nếu cần làm rõ kết quả.', result:'Hồ sơ chưa được chấp thuận.' },
-  completed: { status:'Đã hoàn tất', label:'HOÀN TẤT', note:'Quy trình xử lý hồ sơ đã hoàn tất.', next:'Bạn có thể lưu lại thông tin tra cứu để đối chiếu khi cần.', result:'Quy trình xử lý đã hoàn tất.' },
-};
-const APPEARANCE_DEFAULTS = { primary:'#0878E8', navy:'#123F70', green:'#099B77', background:'#F4F9FC', body_font:'Be Vietnam Pro', heading_font:'Georgia' };
-const ALLOWED_BODY_FONTS = new Set(['Be Vietnam Pro','Times New Roman','System']);
-const ALLOWED_HEADING_FONTS = new Set(['Georgia','Times New Roman','Be Vietnam Pro']);
-function sanitizeAppearance(input) {
-  const x=input&&typeof input==='object'?input:{};
-  const color=(value,fallback)=>/^#[0-9a-f]{6}$/i.test(String(value||''))?String(value).toUpperCase():fallback;
-  const body=String(x.body_font||APPEARANCE_DEFAULTS.body_font),heading=String(x.heading_font||APPEARANCE_DEFAULTS.heading_font);
-  return { primary:color(x.primary,APPEARANCE_DEFAULTS.primary),navy:color(x.navy,APPEARANCE_DEFAULTS.navy),green:color(x.green,APPEARANCE_DEFAULTS.green),background:color(x.background,APPEARANCE_DEFAULTS.background),body_font:ALLOWED_BODY_FONTS.has(body)?body:APPEARANCE_DEFAULTS.body_font,heading_font:ALLOWED_HEADING_FONTS.has(heading)?heading:APPEARANCE_DEFAULTS.heading_font };
-}
-function sanitizeProgramCode(value) {
-  const code=cleanText(value||'XSK',24).toUpperCase();
-  return /^[A-Z0-9-]{2,12}$/.test(code)?code:'XSK';
-}
-function publicCTTStatus(status) { return CTT_STATUS_MAP[SUBMISSION_STATUSES.has(status)?status:'new']||CTT_STATUS_MAP.new; }
-function publicSyncError(error) {
-  const m=String(error?.message||'').toLowerCase();
-  if(!error) return '';
-  if(m.includes('ctt_db')||m.includes('not configured')||m.includes('undefined')) return 'Chưa sẵn sàng kết nối cơ sở dữ liệu CTT.';
-  if(m.includes('unique constraint')||m.includes('already exists')) return 'Mã hồ sơ đang trùng với một bản ghi khác tại CTT; hệ thống không ghi đè dữ liệu đó.';
-  return 'Đồng bộ chưa hoàn tất. Kiểm tra kết nối CTT và cấu trúc dữ liệu; có thể thử đồng bộ lại trong trang quản trị.';
-}
-async function reserveCaseCode(env, programCode) {
-  const safeProgram=sanitizeProgramCode(programCode);
-  for(let attempt=0;attempt<10000;attempt++) {
-    const buf=new Uint32Array(1);crypto.getRandomValues(buf);
-    const number=buf[0]%10000, code=`${String(number).padStart(4,'0')}/MSH-XSK-${safeProgram}`;
-    try {
-      const r=await env.DB.prepare(`INSERT INTO case_code_registry(number,code,program_code,created_at) VALUES(?,?,?,?)`).bind(number,code,safeProgram,now()).run();
-      if(Number(r.meta?.changes||0)===1) return code;
-    } catch(e) {
-      const m=String(e?.message||e).toLowerCase();
-      if(m.includes('unique constraint')||m.includes('sqlite_constraint')||m.includes('constraint failed')) continue;
-      throw e;
-    }
-  }
-  throw new HttpError(503,'Hiện không còn mã số khả dụng trong dải bốn chữ số. Vui lòng liên hệ quản trị viên.');
-}
-async function inspectCTTSchema(db) {
-  try {
-    assert(db,503,'CTT_DB chưa được cấu hình.');
-    const [forms,submissions,events]=await Promise.all([
-      db.prepare(`PRAGMA table_info(forms)`).all(),
-      db.prepare(`PRAGMA table_info(submissions)`).all(),
-      db.prepare(`PRAGMA table_info(case_events)`).all(),
-    ]);
-    const cols={forms:new Set((forms.results||[]).map(x=>x.name)),submissions:new Set((submissions.results||[]).map(x=>x.name)),case_events:new Set((events.results||[]).map(x=>x.name))};
-    const required={
-      forms:['id','name','prefix','description','audience','min_age','enabled','recipient_email','version','config_json','created_at','updated_at'],
-      submissions:['code','form_id','form_version','form_snapshot_json','user_id','full_name','email','answers_json','terms_snapshot_json','status','created_at','updated_at'],
-      case_events:['id','submission_code','event_type','public_label','public_note','status','created_at'],
-    };
-    const missing=[];
-    for(const [table,names] of Object.entries(required)) for(const name of names) if(!cols[table].has(name)) missing.push(`${table}.${name}`);
-    if(missing.length) return {ok:false,error:`Cơ sở dữ liệu CTT đang thiếu cấu trúc cần thiết: ${missing.slice(0,8).join(', ')}${missing.length>8?'…':''}. Kiểm tra cấu trúc CTT hiện tại; không chạy migration Xanh lên CTT.`};
-    return {ok:true,error:''};
-  } catch(e) { return {ok:false,error:publicSyncError(e)}; }
-}
-async function ensureCTTIntegrationForm(db) {
-  assert(db,503,'Kết nối tra cứu CTT chưa được cấu hình.');
-  const t=now(), config={source:'xanh-sky-first',internal_integration:true,public_submission_form:false};
-  await db.prepare(`INSERT OR IGNORE INTO forms(id,name,prefix,description,audience,min_age,enabled,recipient_email,version,config_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`)
-    .bind(CTT_FORM_ID,'Hồ sơ Xanh Sky First','XSK','Bản ghi tích hợp nội bộ để CTT tra cứu hồ sơ được tiếp nhận tại website Xanh Sky First.','private',null,0,'xanh@skyfirst.io.vn',1,JSON.stringify(config),t,t).run();
-  const existing=await db.prepare(`SELECT id,config_json FROM forms WHERE id=?`).bind(CTT_FORM_ID).first();
-  assert(existing&&asJson(existing.config_json,{}).source==='xanh-sky-first',409,'Không thể tạo vùng tích hợp Xanh trong CTT vì mã biểu mẫu nội bộ đã được sử dụng.');
-}
-async function syncCaseSubmissionToCTT(env, payload) {
-  const db=env.CTT_DB;
-  assert(db,503,'CTT_DB chưa được cấu hình trên môi trường chạy Xanh.');
-  assert(payload&&String(payload.code||'').trim().length>=4,400,'Mã hồ sơ không hợp lệ để đồng bộ.');
-  assert(validEmail(payload.email),400,'Hồ sơ thiếu email hợp lệ nên CTT không thể xác minh bằng mã và email.');
-  const schema=await inspectCTTSchema(db); assert(schema.ok,503,schema.error||'Cấu trúc dữ liệu CTT chưa sẵn sàng.');
-  await ensureCTTIntegrationForm(db);
-  const status=publicCTTStatus(payload.status), timestamp=payload.updated_at||now();
-  const colsResult=await db.prepare(`PRAGMA table_info(submissions)`).all();
-  const cols=new Set((colsResult.results||[]).map(c=>c.name));
-  for(const col of ['code','form_id','full_name','email','answers_json','status','created_at','updated_at']) assert(cols.has(col),503,`CTT thiếu trường dữ liệu cần thiết: ${col}.`);
-  const existing=await db.prepare(`SELECT code,form_id,full_name,email,answers_json,status,created_at,updated_at FROM submissions WHERE code=? LIMIT 1`).bind(payload.code).first();
-  const marker=existing?asJson(existing.answers_json,{}):{};
-  if(existing) assert(existing.form_id===CTT_FORM_ID&&marker.source==='xanh-sky-first'&&Number(marker.xanh_submission_id)===Number(payload.id),409,'Mã hồ sơ đã tồn tại tại CTT nhưng không thuộc bản ghi Xanh này; hệ thống không ghi đè dữ liệu.');
-  const snapshot=JSON.stringify({name:'Hồ sơ Xanh Sky First',description:'Hồ sơ này được tiếp nhận và quản lý trên website Xanh Sky First. CTT chỉ cung cấp chức năng tra cứu trạng thái đã đồng bộ.',source:'xanh-sky-first'});
-  const answers=JSON.stringify({source:'xanh-sky-first',xanh_submission_id:Number(payload.id),program_code:sanitizeProgramCode(payload.program_code||'XSK')});
-  if(!existing) {
-    const insertCols=['code','form_id','form_version','form_snapshot_json','user_id','full_name','email','answers_json','terms_snapshot_json','status','created_at','updated_at'];
-    const values=[payload.code,CTT_FORM_ID,1,snapshot,null,cleanText(payload.full_name||'Người đăng ký',120),String(payload.email).trim().toLowerCase(),answers,'[]',status.status,payload.created_at||timestamp,timestamp];
-    await db.prepare(`INSERT INTO submissions(${insertCols.join(',')}) VALUES(${insertCols.map(()=>'?').join(',')})`).bind(...values).run();
-  } else {
-    await db.prepare(`UPDATE submissions SET full_name=?,email=?,answers_json=?,status=?,updated_at=? WHERE code=? AND form_id=?`)
-      .bind(cleanText(payload.full_name||'Người đăng ký',120),String(payload.email).trim().toLowerCase(),answers,status.status,timestamp,payload.code,CTT_FORM_ID).run();
-  }
-  const updates=[],args=[];
-  if(cols.has('next_action')) { updates.push('next_action=?'); args.push(status.next); }
-  if(cols.has('result_summary')) { updates.push('result_summary=?'); args.push(status.result); }
-  if(updates.length) { args.push(timestamp,payload.code,CTT_FORM_ID); await db.prepare(`UPDATE submissions SET ${updates.join(',')},updated_at=? WHERE code=? AND form_id=?`).bind(...args).run(); }
-  // Keep public timeline entries safe: never copy Xanh's internal notes or raw form answers to CTT.
-  const lastEvent=await db.prepare(`SELECT status FROM case_events WHERE submission_code=? ORDER BY created_at DESC,id DESC LIMIT 1`).bind(payload.code).first().catch(()=>null);
-  if(!lastEvent || String(lastEvent.status||'')!==String(status.status)) {
-    await db.prepare(`INSERT INTO case_events(submission_code,event_type,public_label,public_note,status,created_at) VALUES(?,?,?,?,?,?)`)
-      .bind(payload.code,lastEvent?'xanh_status_update':'xanh_received',status.label,status.note,status.status,timestamp).run();
-  }
-  return {synced:true,status:status.status};
-}
-async function cttPayloadForSubmission(env, id) {
-  const row=await env.DB.prepare(`SELECT s.id,s.code,s.full_name,s.email,s.status,s.created_at,s.updated_at,f.name AS form_name,f.settings_json FROM form_submissions s JOIN forms f ON f.id=s.form_id WHERE s.id=?`).bind(Number(id)).first();
-  if(!row) return null;
-  const settings=sanitizeFormSettings(asJson(row.settings_json,{}));
-  return {...row,program_code:settings.program_code||'XSK'};
-}
-async function markCTTSyncFailure(env,payload,error) {
-  const message=publicSyncError(error),t=now();
-  try { await env.DB.prepare(`UPDATE form_submissions SET ctt_sync_status='pending',ctt_sync_error=? WHERE id=?`).bind(message,Number(payload.id)).run(); } catch {}
-  try { await env.DB.prepare(`INSERT INTO ctt_sync_queue(submission_id,case_code,payload_json,state,attempts,last_error,updated_at) VALUES(?,?,?,'pending',1,?,?) ON CONFLICT(submission_id) DO UPDATE SET case_code=excluded.case_code,payload_json=excluded.payload_json,state='pending',attempts=ctt_sync_queue.attempts+1,last_error=excluded.last_error,ctt_synced_at=NULL,updated_at=excluded.updated_at`)
-    .bind(Number(payload.id),String(payload.code||''),JSON.stringify(payload),message,t).run(); } catch(e) { console.error('CTT retry queue unavailable',e); }
-  return {synced:false,error:message};
-}
-async function markCTTSyncSuccess(env,payload) {
-  const t=now();
-  await env.DB.prepare(`UPDATE form_submissions SET ctt_sync_status='synced',ctt_sync_error='',ctt_synced_at=? WHERE id=?`).bind(t,Number(payload.id)).run();
-  await env.DB.prepare(`DELETE FROM ctt_sync_queue WHERE submission_id=?`).bind(Number(payload.id)).run().catch(()=>{});
-  return {synced:true};
-}
-async function synchronizeOne(env,payload) {
-  try { await syncCaseSubmissionToCTT(env,payload); await markCTTSyncSuccess(env,payload); return {synced:true}; }
-  catch(e) { const r=await markCTTSyncFailure(env,payload,e); console.error('CTT sync pending for code',payload.code,publicSyncError(e)); return r; }
-}
-async function retryPendingCTTSync(env, limit=50) {
-  const capped=Math.max(1,Math.min(200,Number(limit)||50));
-  const rows=await env.DB.prepare(`SELECT s.id,s.code,s.full_name,s.email,s.status,s.created_at,s.updated_at,f.name AS form_name,f.settings_json FROM form_submissions s JOIN forms f ON f.id=s.form_id WHERE COALESCE(s.ctt_sync_status,'pending') IN ('pending','failed') ORDER BY s.created_at ASC LIMIT ?`).bind(capped).all();
-  let synced=0,failed=0;
-  for(const row of rows.results||[]) {
-    const payload={...row,program_code:sanitizeFormSettings(asJson(row.settings_json,{})).program_code||'XSK'};
-    const result=await synchronizeOne(env,payload); if(result.synced) synced++; else failed++;
-  }
-  return {checked:(rows.results||[]).length,synced,failed};
-}
-
 async function sendMail(env, { to, subject, html }) {
   if (!env.RESEND_API_KEY) return { sent: false, reason: 'RESEND_API_KEY chưa được cấu hình' };
   const from = env.EMAIL_FROM || 'Xanh Sky First <xanh@skyfirst.io.vn>';
@@ -337,7 +192,6 @@ function sanitizeFormSettings(input) {
     closed_message: cleanText(x.closed_message || 'Biểu mẫu hiện không nhận thêm hồ sơ.', 1000),
     require_guardian_consent: bool(x.require_guardian_consent),
     guardian_note: cleanText(x.guardian_note, 1200),
-    program_code: sanitizeProgramCode(x.program_code),
   };
 }
 async function publishDueContent(env) {
@@ -387,9 +241,9 @@ async function handlePublic(env, request, action) {
   const u=new URL(request.url);
   await publishDueContent(env);
   if (action === 'site' && request.method==='GET') {
-    const [settings,navigation,appearance]=await Promise.all([settingsGet(env),settingsGet(env,'navigation'),settingsGet(env,'appearance')]);
+    const [settings,navigation]=await Promise.all([settingsGet(env),settingsGet(env,'navigation')]);
     const page=await env.DB.prepare(`SELECT * FROM pages WHERE slug='home' AND status='published'`).first();
-    return json({ok:true,settings:{...settings,appearance:sanitizeAppearance(appearance)},navigation,page:pageOut(page)});
+    return json({ok:true,settings,navigation,page:pageOut(page)});
   }
   if (action === 'page' && request.method==='GET') {
     const slug=safeSlug(u.searchParams.get('slug'));
@@ -434,13 +288,7 @@ async function handlePublic(env, request, action) {
     const impact={localities:Number(r.localities||0),participants:Number(r.participants||0),completed_activities:Number(r.completed_activities||0),volunteer_hours:Number(r.volunteer_hours||0),waste_tons:Number(r.waste_tons||0),community_reached:Number(r.community_reached||0)};
     const verifiedCount=Number(r.verified_records||0);
     const sourceValues={participants:impact.participants,completed_activities:impact.completed_activities,waste_tons:impact.waste_tons,community_reached:impact.community_reached};
-    const counters=(cfgRows.results||[]).map(c=>{
-      const mode=c.value_mode==='manual'?'manual':'verified';
-      const hasManual=c.manual_value!==null&&c.manual_value!==undefined&&Number.isFinite(Number(c.manual_value));
-      const value=mode==='manual'?(hasManual?Math.max(0,Number(c.manual_value)):null):(verifiedCount>0?Number(sourceValues[c.metric_key]||0):null);
-      const source_label=mode==='manual'?(hasManual?'Số liệu do quản trị viên nhập':'Chưa nhập số liệu thủ công'):(verifiedCount>0?'Dữ liệu Impact đã xác minh':'Chưa có dữ liệu xác minh');
-      return {...c,value,value_mode:mode,unit_suffix:cleanText(c.unit_suffix||'',20),source_label,duration_ms:Math.min(12000,Math.max(300,Number(c.duration_ms||1800))),delay_ms:Math.min(5000,Math.max(0,Number(c.delay_ms||0))),hold_ms:Math.min(60000,Math.max(0,Number(c.hold_ms||0))),enabled:Number(c.enabled)===1};
-    });
+    const counters=(cfgRows.results||[]).map(c=>({...c,value:verifiedCount>0?Number(sourceValues[c.metric_key]||0):null,duration_ms:Math.min(12000,Math.max(300,Number(c.duration_ms||1800))),delay_ms:Math.min(5000,Math.max(0,Number(c.delay_ms||0))),hold_ms:Math.min(60000,Math.max(0,Number(c.hold_ms||0))),enabled:Number(c.enabled)===1}));
     return json({ok:true,impact,counters},200,{'Cache-Control':'no-store'});
   }
   if (action === 'contact' && request.method==='POST') {
@@ -493,7 +341,12 @@ async function handlePublic(env, request, action) {
     return json({ok:true,item:{...row,fields:asJson(row.fields_json,[]),settings:asJson(row.settings_json,{}),cover_url:row.cover_media_id?`/api/media/${row.cover_media_id}`:null}});
   }
   if (action === 'submission-lookup' && request.method==='GET') {
-    return json({ok:false,error:'LOOKUP_MOVED_TO_CTT',message:'Tra cứu hồ sơ Xanh được thực hiện duy nhất tại Cổng Thông Tin Số Sky First (CTT).',lookup_url:CTT_CASE_BASE},410,{'Cache-Control':'no-store'});
+    await rateLimit(env,request,'submission-lookup',30,3600);
+    const code=cleanText(u.searchParams.get('code'),80).toUpperCase();
+    assert(code.length>=8,400,'Vui lòng nhập mã hồ sơ hợp lệ.');
+    const row=await env.DB.prepare(`SELECT s.code,s.status,s.created_at,s.updated_at,f.name AS form_name FROM form_submissions s JOIN forms f ON f.id=s.form_id WHERE UPPER(s.code)=? LIMIT 1`).bind(code).first();
+    assert(row,404,'Không tìm thấy hồ sơ với mã này.');
+    return json({ok:true,item:row});
   }
   if (action === 'form-upload' && request.method==='POST') {
     await rateLimit(env,request,'form-upload',12,3600);
@@ -516,11 +369,9 @@ async function handlePublic(env, request, action) {
     if(form.opens_at) assert(new Date(form.opens_at)<=new Date(),409,'Biểu mẫu chưa đến thời gian mở.');
     if(form.closes_at) assert(new Date(form.closes_at)>new Date(),409,settings.closed_message);
     if(form.capacity){const c=await env.DB.prepare(`SELECT COUNT(*) c FROM form_submissions WHERE form_id=?`).bind(form.id).first();assert(Number(c.c)<Number(form.capacity),409,'Biểu mẫu đã đủ số lượng.');}
-    // Form Builder is the single source of truth for public form fields and server-side validation.
     const answers=validateSubmissionAnswers(fields,b.answers||{});
-    // CTT verifies a case with both the case code and the registration email.
-    // Refuse to issue a code if the form has not collected a valid email.
-    assert(env.CTT_DB,503,'Hệ thống tiếp nhận đang hoàn thiện kết nối tra cứu CTT. Vui lòng thử lại sau.');
+    // Form Builder is the single source of truth: no hidden/hard-coded identity fields.
+    // These three columns are only searchable metadata extracted from configured answers when present.
     const findAnswer=(preferredIds,type)=>{
       for(const id of preferredIds){const v=answers[id];if(typeof v==='string'&&v.trim())return v;}
       const f=fields.find(x=>x.type===type&&typeof answers[x.id]==='string'&&answers[x.id].trim());
@@ -529,7 +380,6 @@ async function handlePublic(env, request, action) {
     const name=cleanText(findAnswer(['full_name','name','ho_ten'],'text'),120);
     const email=cleanText(findAnswer(['email'],'email'),200).toLowerCase();
     const phone=cleanText(findAnswer(['phone','phone_zalo','sdt'],'phone'),40);
-    assert(validEmail(email),400,'Để tra cứu tại CTT, biểu mẫu cần có email hợp lệ. Vui lòng nhập email đã đăng ký.');
     if(settings.require_guardian_consent) assert(bool(b.guardian_consent),400,'Biểu mẫu này yêu cầu xác nhận đồng ý phù hợp đối với người chưa thành niên.');
     const claimedUploads=[];
     for(const f of fields.filter(x=>['file','signature'].includes(x.type))){
@@ -539,28 +389,15 @@ async function handlePublic(env, request, action) {
       assert(up,400,`Tệp tại “${f.label}” không hợp lệ hoặc đã được sử dụng.`);
       claimedUploads.push(up.id); answers[f.id].upload_id=up.id; delete answers[f.id].upload_token;
     }
-    const t=now(), programCode=settings.program_code||'XSK', code=await reserveCaseCode(env,programCode);
-    let r;
-    try {
-      r=await env.DB.prepare(`INSERT INTO form_submissions(form_id,code,full_name,email,phone,answers_json,status,created_at,updated_at,ctt_sync_status) VALUES(?,?,?,?,?,?,'new',?,?,'pending')`).bind(form.id,code,name,email,phone,JSON.stringify(answers),t,t).run();
-    } catch(e) {
-      // The registry also prevents reuse; do not try to recycle a code after a failed insert.
-      throw e;
-    }
+    const code=`XSF-${Date.now().toString(36).toUpperCase()}-${randomToken(3).slice(0,4).toUpperCase()}`,t=now();
+    const r=await env.DB.prepare(`INSERT INTO form_submissions(form_id,code,full_name,email,phone,answers_json,status,created_at,updated_at) VALUES(?,?,?,?,?,?,'new',?,?)`).bind(form.id,code,name,email,phone,JSON.stringify(answers),t,t).run();
     const sid=r.meta.last_row_id;
-    await env.DB.prepare(`UPDATE case_code_registry SET submission_id=? WHERE code=?`).bind(sid,code).run();
     for(const uploadId of claimedUploads) await env.DB.prepare(`UPDATE form_uploads SET claimed_submission_id=? WHERE id=? AND claimed_submission_id IS NULL`).bind(sid,uploadId).run();
     await env.DB.prepare(`INSERT INTO submission_events(submission_id,event_type,new_status,note,created_at) VALUES(?,'created','new','Hồ sơ được gửi từ website',?)`).bind(sid,t).run();
-    const payload={id:sid,code,program_code:programCode,form_name:form.name,full_name:name,email,status:'new',created_at:t,updated_at:t};
-    const synced=await synchronizeOne(env,payload);
-    const trackingUrl=`${CTT_CASE_BASE}?code=${encodeURIComponent(code)}`;
-    const lookupMessage=synced.synced
-      ? `${settings.confirmation_message} Bạn có thể tra cứu tại CTT bằng mã hồ sơ và email đã đăng ký.`
-      : `${settings.confirmation_message} Hệ thống đã lưu hồ sơ nhưng chưa xác nhận đồng bộ tại CTT; mã chỉ tra cứu được sau khi đồng bộ hoàn tất. Vui lòng thử lại sau.`;
     let emailSent=false;
-    if(settings.confirmation_email&&validEmail(email)){const m=await sendMail(env,{to:email,subject:`Xác nhận hồ sơ ${code} · Xanh Sky First`,html:`<p>Xin chào ${escapeHtml(name)},</p><p>Xanh Sky First đã nhận hồ sơ của bạn cho <b>${escapeHtml(form.name)}</b>.</p><p>Mã hồ sơ: <b>${escapeHtml(code)}</b></p><p>${escapeHtml(lookupMessage)}</p>${synced.synced?`<p><a href="${trackingUrl}">Tra cứu hồ sơ tại CTT</a></p>`:`<p>Đường dẫn tra cứu: <a href="${trackingUrl}">CTT — Cổng Thông Tin Số Sky First</a>. Mã sẽ khả dụng sau khi quá trình đồng bộ hoàn tất.</p>`}`}); emailSent=!!m.sent;}
+    if(settings.confirmation_email&&validEmail(email)){const m=await sendMail(env,{to:email,subject:`Xác nhận hồ sơ ${code} · Xanh Sky First`,html:`<p>Xin chào ${escapeHtml(name)},</p><p>Xanh Sky First đã nhận hồ sơ của bạn cho <b>${escapeHtml(form.name)}</b>.</p><p>Mã hồ sơ: <b>${code}</b></p><p>${escapeHtml(settings.confirmation_message)}</p>`}); emailSent=!!m.sent;}
     if(emailSent) await env.DB.prepare(`UPDATE submission_events SET email_sent=1 WHERE submission_id=? AND event_type='created'`).bind(sid).run();
-    return json({ok:true,code,message:lookupMessage,title:settings.confirmation_title,tracking_url:trackingUrl,ctt_synced:synced.synced,ctt_sync_message:synced.synced?'Đã đồng bộ với CTT.':'Đang chờ đồng bộ với CTT; mã chưa thể tra cứu cho đến khi hoàn tất.',email_sent:emailSent},201);
+    return json({ok:true,code,message:settings.confirmation_message,title:settings.confirmation_title},201);
   }
   throw new HttpError(404,'Không tìm thấy API công khai.');
 }
@@ -631,11 +468,9 @@ async function handleAdmin(env, request, action, p) {
       const b=await readJson(request),items=Array.isArray(b.items)?b.items:[];
       const allowed=new Set(['participants','completed_activities','waste_tons','community_reached']);
       assert(items.length===4&&items.every(x=>allowed.has(String(x.metric_key))),400,'Cấu hình phải bao gồm đúng bốn chỉ số Impact được hỗ trợ.');
-      const saved=[];for(const x of items){const key=String(x.metric_key),label=cleanText(x.label,100),description=cleanText(x.description,300),start=Math.max(0,Math.min(1000000000,Number(x.start_value||0))),duration=Math.max(300,Math.min(12000,Number(x.duration_ms||1800))),delay=Math.max(0,Math.min(5000,Number(x.delay_ms||0))),hold=Math.max(0,Math.min(60000,Number(x.hold_ms||0))),enabled=bool(x.enabled)?1:0,order=Math.max(0,Math.min(20,Number(x.sort_order||0))),mode=x.value_mode==='manual'?'manual':'verified',rawManual=x.manual_value,manualValue=(rawManual===null||rawManual===undefined||String(rawManual).trim()==='')?null:Number(rawManual),unit=cleanText(x.unit_suffix||'',20);
+      const saved=[];for(const x of items){const key=String(x.metric_key),label=cleanText(x.label,100),description=cleanText(x.description,300),start=Math.max(0,Math.min(1000000000,Number(x.start_value||0))),duration=Math.max(300,Math.min(12000,Number(x.duration_ms||1800))),delay=Math.max(0,Math.min(5000,Number(x.delay_ms||0))),hold=Math.max(0,Math.min(60000,Number(x.hold_ms||0))),enabled=bool(x.enabled)?1:0,order=Math.max(0,Math.min(20,Number(x.sort_order||0)));
         assert(label.length>=2,400,'Nhãn số liệu cần ít nhất 2 ký tự.');
-        assert(mode!=='manual'||(manualValue!==null&&Number.isFinite(manualValue)&&manualValue>=0&&manualValue<=1000000000000),400,'Chế độ nhập thủ công cần một giá trị số từ 0 đến 1.000.000.000.000.');
-        assert(manualValue===null||(Number.isFinite(manualValue)&&manualValue>=0&&manualValue<=1000000000000),400,'Giá trị bộ đếm không hợp lệ.');
-        await env.DB.prepare(`UPDATE impact_counter_config SET label=?,description=?,start_value=?,duration_ms=?,delay_ms=?,hold_ms=?,enabled=?,sort_order=?,value_mode=?,manual_value=?,unit_suffix=?,updated_at=? WHERE metric_key=?`).bind(label,description,start,duration,delay,hold,enabled,order,mode,manualValue,unit,now(),key).run();
+        await env.DB.prepare(`UPDATE impact_counter_config SET label=?,description=?,start_value=?,duration_ms=?,delay_ms=?,hold_ms=?,enabled=?,sort_order=?,updated_at=? WHERE metric_key=?`).bind(label,description,start,duration,delay,hold,enabled,order,now(),key).run();
         saved.push(key);
       }
       await audit(env,user.id,'impact.counters.update','impact','counter-config',{metrics:saved},request);
@@ -734,33 +569,8 @@ async function handleAdmin(env, request, action, p) {
 
   if(action==='settings'){
     requireFeature(user,'pages',write);
-    if(request.method==='GET'){const rows=await env.DB.prepare(`SELECT key,value_json,updated_at FROM site_settings ORDER BY key`).all();const groups=Object.fromEntries(rows.results.map(x=>[x.key,asJson(x.value_json,{})]));groups.appearance=sanitizeAppearance(groups.appearance||{});return json({ok:true,groups});}
-    if(request.method==='PUT'){
-      assert(ADMIN_ROLES.has(user.role),403,'Chỉ quản trị viên được thay đổi cài đặt.');
-      const b=await readJson(request),key=cleanText(b.key||'general',50);
-      assert(['general','footer','media','impact','security','cms','appearance'].includes(key),400,'Nhóm cài đặt không hợp lệ.');
-      const current=await settingsGet(env,key);let next={...current,...(b.value||{})};
-      if(key==='security') next.pbkdf2_iterations=PBKDF2_ITERATIONS;
-      if(key==='appearance') next=sanitizeAppearance(next);
-      await settingsSet(env,key,next);await audit(env,user.id,'settings.update','system',key,{keys:Object.keys(b.value||{})},request);return json({ok:true,key,value:next});
-    }
-  }
-
-  if(action==='ctt-sync'){
-    assert(ADMIN_ROLES.has(user.role),403,'Chỉ quản trị viên mới được quản lý kết nối tra cứu CTT.');
-    if(request.method==='GET'){
-      const rows=await env.DB.prepare(`SELECT s.id,s.code,s.ctt_sync_status,s.ctt_sync_error,s.ctt_synced_at,q.attempts,q.last_error,q.updated_at AS queue_updated_at FROM form_submissions s LEFT JOIN ctt_sync_queue q ON q.submission_id=s.id WHERE COALESCE(s.ctt_sync_status,'pending') IN ('pending','failed') OR q.submission_id IS NOT NULL ORDER BY s.created_at DESC LIMIT 100`).all();
-      const count=await env.DB.prepare(`SELECT COUNT(*) AS count FROM form_submissions WHERE COALESCE(ctt_sync_status,'pending') IN ('pending','failed')`).first();
-      let connection_ok=false,connection_error='';
-      if(env.CTT_DB){const probe=await inspectCTTSchema(env.CTT_DB);connection_ok=probe.ok;connection_error=probe.error}
-      return json({ok:true,binding_available:!!env.CTT_DB,connection_ok,connection_error,pending_count:Number(count?.count||0),items:(rows.results||[]).map(x=>({id:x.id,code:x.code,state:x.ctt_sync_status||'pending',message:x.ctt_sync_error||x.last_error||'',attempts:Number(x.attempts||0),updated_at:x.queue_updated_at||x.ctt_synced_at||null}))});
-    }
-    if(request.method==='POST'){
-      const result=await retryPendingCTTSync(env,100);
-      await audit(env,user.id,'ctt.sync.retry','integration','ctt-sync',result,request);
-      return json({ok:true,...result,binding_available:!!env.CTT_DB});
-    }
-    throw new HttpError(405,'Method not allowed');
+    if(request.method==='GET'){const rows=await env.DB.prepare(`SELECT key,value_json,updated_at FROM site_settings ORDER BY key`).all();return json({ok:true,groups:Object.fromEntries(rows.results.map(x=>[x.key,asJson(x.value_json,{})]))});}
+    if(request.method==='PUT'){assert(ADMIN_ROLES.has(user.role),403,'Chỉ quản trị viên được thay đổi cài đặt.');const b=await readJson(request),key=cleanText(b.key||'general',50);assert(['general','footer','media','impact','security','cms'].includes(key),400,'Nhóm cài đặt không hợp lệ.');const current=await settingsGet(env,key),next={...current,...(b.value||{})};if(key==='security') next.pbkdf2_iterations=PBKDF2_ITERATIONS;await settingsSet(env,key,next);await audit(env,user.id,'settings.update','system',key,{keys:Object.keys(b.value||{})},request);return json({ok:true,key,value:next});}
   }
 
   if(action==='applications'){
@@ -805,12 +615,12 @@ async function handleAdmin(env, request, action, p) {
   if(action==='forms'){
     requireFeature(user,'forms',write);
     if(request.method==='GET'){const rows=await env.DB.prepare(`SELECT * FROM forms ORDER BY updated_at DESC`).all();return json({ok:true,items:rows.results.map(x=>({...x,fields:sanitizeFields(asJson(x.fields_json,[])),settings:sanitizeFormSettings(asJson(x.settings_json,{})),cover_url:x.cover_media_id?`/api/media/${x.cover_media_id}`:null}))});}
-    if(request.method==='POST'){const b=await readJson(request),name=cleanText(b.name,200),slug=safeSlug(b.slug||name),t=now();assert(name&&slug,400,'Tên/slug không hợp lệ.');const cover=await assertMediaImage(env,b.cover_media_id),fields=sanitizeFields(b.fields),settings=sanitizeFormSettings(b.settings);assert(fields.some(f=>f.type==='email'&&f.required),400,'Mỗi biểu mẫu cần có trường Email bắt buộc để người đăng ký có thể tra cứu hồ sơ tại CTT.');const r=await env.DB.prepare(`INSERT INTO forms(slug,name,description,kind,status,fields_json,settings_json,cover_media_id,opens_at,closes_at,capacity,created_by,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(slug,name,cleanText(b.description,5000),cleanText(b.kind||'general',80),FORM_STATUSES.has(b.status)?b.status:'draft',JSON.stringify(fields),JSON.stringify(settings),cover,b.opens_at||null,b.closes_at||null,b.capacity?Number(b.capacity):null,user.id,user.id,t,t).run();await audit(env,user.id,'form.create','form',r.meta.last_row_id,{slug,field_count:fields.length},request);return json({ok:true,id:r.meta.last_row_id},201);}
+    if(request.method==='POST'){const b=await readJson(request),name=cleanText(b.name,200),slug=safeSlug(b.slug||name),t=now();assert(name&&slug,400,'Tên/slug không hợp lệ.');const cover=await assertMediaImage(env,b.cover_media_id),fields=sanitizeFields(b.fields),settings=sanitizeFormSettings(b.settings);const r=await env.DB.prepare(`INSERT INTO forms(slug,name,description,kind,status,fields_json,settings_json,cover_media_id,opens_at,closes_at,capacity,created_by,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(slug,name,cleanText(b.description,5000),cleanText(b.kind||'general',80),FORM_STATUSES.has(b.status)?b.status:'draft',JSON.stringify(fields),JSON.stringify(settings),cover,b.opens_at||null,b.closes_at||null,b.capacity?Number(b.capacity):null,user.id,user.id,t,t).run();await audit(env,user.id,'form.create','form',r.meta.last_row_id,{slug,field_count:fields.length},request);return json({ok:true,id:r.meta.last_row_id},201);}
   }
   if(action==='form'&&p[2]){
     requireFeature(user,'forms',write);const id=Number(p[2]),old=await env.DB.prepare(`SELECT * FROM forms WHERE id=?`).bind(id).first();assert(old,404,'Không tìm thấy biểu mẫu.');
     if(request.method==='GET')return json({ok:true,item:{...old,fields:sanitizeFields(asJson(old.fields_json,[])),settings:sanitizeFormSettings(asJson(old.settings_json,{})),cover_url:old.cover_media_id?`/api/media/${old.cover_media_id}`:null}});
-    if(request.method==='PUT'){const b=await readJson(request);let cover=old.cover_media_id;if(Object.prototype.hasOwnProperty.call(b,'cover_media_id'))cover=await assertMediaImage(env,b.cover_media_id);const fields=sanitizeFields(b.fields??asJson(old.fields_json,[])),settings=sanitizeFormSettings(b.settings??asJson(old.settings_json,{}));assert(fields.some(f=>f.type==='email'&&f.required),400,'Mỗi biểu mẫu cần có trường Email bắt buộc để người đăng ký có thể tra cứu hồ sơ tại CTT.');await env.DB.prepare(`UPDATE forms SET slug=?,name=?,description=?,kind=?,status=?,fields_json=?,settings_json=?,cover_media_id=?,opens_at=?,closes_at=?,capacity=?,updated_by=?,updated_at=? WHERE id=?`).bind(safeSlug(b.slug||old.slug),cleanText(b.name??old.name,200),cleanText(b.description??old.description,5000),cleanText(b.kind??old.kind,80),FORM_STATUSES.has(b.status)?b.status:old.status,JSON.stringify(fields),JSON.stringify(settings),cover,b.opens_at??old.opens_at,b.closes_at??old.closes_at,b.capacity===null?null:(b.capacity??old.capacity),user.id,now(),id).run();await audit(env,user.id,'form.update','form',id,{field_count:fields.length},request);return json({ok:true});}
+    if(request.method==='PUT'){const b=await readJson(request);let cover=old.cover_media_id;if(Object.prototype.hasOwnProperty.call(b,'cover_media_id'))cover=await assertMediaImage(env,b.cover_media_id);const fields=sanitizeFields(b.fields??asJson(old.fields_json,[])),settings=sanitizeFormSettings(b.settings??asJson(old.settings_json,{}));await env.DB.prepare(`UPDATE forms SET slug=?,name=?,description=?,kind=?,status=?,fields_json=?,settings_json=?,cover_media_id=?,opens_at=?,closes_at=?,capacity=?,updated_by=?,updated_at=? WHERE id=?`).bind(safeSlug(b.slug||old.slug),cleanText(b.name??old.name,200),cleanText(b.description??old.description,5000),cleanText(b.kind??old.kind,80),FORM_STATUSES.has(b.status)?b.status:old.status,JSON.stringify(fields),JSON.stringify(settings),cover,b.opens_at??old.opens_at,b.closes_at??old.closes_at,b.capacity===null?null:(b.capacity??old.capacity),user.id,now(),id).run();await audit(env,user.id,'form.update','form',id,{field_count:fields.length},request);return json({ok:true});}
     if(request.method==='DELETE'){assert(ADMIN_ROLES.has(user.role),403,'Chỉ quản trị viên được xóa biểu mẫu.');const uploads=await env.DB.prepare(`SELECT r2_key FROM form_uploads WHERE form_id=?`).bind(id).all();for(const x of uploads.results||[]){try{await env.STORAGE.delete(x.r2_key)}catch{}}const c=await env.DB.prepare(`SELECT COUNT(*) c FROM form_submissions WHERE form_id=?`).bind(id).first();await env.DB.prepare(`DELETE FROM forms WHERE id=?`).bind(id).run();await audit(env,user.id,'form.delete','form',id,{deleted_submissions:Number(c.c||0),deleted_uploads:(uploads.results||[]).length},request);return json({ok:true,deleted_submissions:Number(c.c||0)});}
   }
 
@@ -820,23 +630,8 @@ async function handleAdmin(env, request, action, p) {
   if(action==='submission'&&p[2]){
     requireFeature(user,'submissions',write);const id=Number(p[2]),row=await env.DB.prepare(`SELECT s.*,f.name AS form_name,f.fields_json FROM form_submissions s JOIN forms f ON f.id=s.form_id WHERE s.id=?`).bind(id).first();assert(row,404,'Không tìm thấy hồ sơ.');
     if(request.method==='GET'){const ev=await env.DB.prepare(`SELECT e.*,u.name AS actor_name FROM submission_events e LEFT JOIN users u ON u.id=e.actor_user_id WHERE e.submission_id=? ORDER BY e.created_at DESC`).bind(id).all();return json({ok:true,item:{...row,answers:asJson(row.answers_json,{}),fields:sanitizeFields(asJson(row.fields_json,[]))},timeline:ev.results});}
-    if(request.method==='PUT'){
-      const b=await readJson(request),status=SUBMISSION_STATUSES.has(b.status)?b.status:row.status,note=cleanText(b.internal_notes??row.internal_notes,5000),assignee=b.assignee_id?Number(b.assignee_id):user.id,t=now();
-      await env.DB.prepare(`UPDATE form_submissions SET status=?,internal_notes=?,assignee_id=?,updated_at=? WHERE id=?`).bind(status,note,assignee,t,id).run();
-      let emailSent=0;if(bool(b.send_email)&&validEmail(row.email)){const msg=cleanText(b.email_message||`Trạng thái hồ sơ ${row.code} đã được cập nhật.`,3000),m=await sendMail(env,{to:row.email,subject:`Cập nhật hồ sơ ${row.code} · Xanh Sky First`,html:`<p>Xin chào ${escapeHtml(row.full_name)},</p><p>${escapeHtml(msg).replace(/\n/g,'<br>')}</p>`});emailSent=m.sent?1:0;}
-      await env.DB.prepare(`INSERT INTO submission_events(submission_id,event_type,old_status,new_status,note,actor_user_id,email_sent,created_at) VALUES(?,'status_update',?,?,?,?,?,?)`).bind(id,row.status,status,cleanText(b.event_note||'',2000),user.id,emailSent,t).run();
-      const payload=await cttPayloadForSubmission(env,id);let sync={synced:false,error:'Không thể tạo dữ liệu đồng bộ.'};if(payload)sync=await synchronizeOne(env,payload);
-      await audit(env,user.id,'submission.update','submission',id,{status,email_sent:!!emailSent,ctt_synced:sync.synced},request);
-      return json({ok:true,ctt_synced:sync.synced,ctt_sync_message:sync.synced?'Đã cập nhật trạng thái tại CTT.':sync.error||'Đang chờ đồng bộ trạng thái với CTT.'});
-    }
-    if(request.method==='DELETE'){
-      assert(ADMIN_ROLES.has(user.role),403,'Chỉ quản trị viên được xóa hồ sơ.');
-      // Delete the mirrored public record first, so CTT never keeps a stale searchable case.
-      assert(env.CTT_DB,503,'Chưa có kết nối CTT. Không thể xóa đồng bộ hồ sơ này.');
-      await env.CTT_DB.prepare(`DELETE FROM submissions WHERE code=? AND form_id=? AND json_extract(answers_json,'$.source')='xanh-sky-first' AND CAST(json_extract(answers_json,'$.xanh_submission_id') AS INTEGER)=?`).bind(row.code,CTT_FORM_ID,id).run();
-      const uploads=await env.DB.prepare(`SELECT r2_key FROM form_uploads WHERE claimed_submission_id=?`).bind(id).all();for(const x of uploads.results||[]){try{await env.STORAGE.delete(x.r2_key)}catch{}}
-      await env.DB.prepare(`DELETE FROM form_submissions WHERE id=?`).bind(id).run();await audit(env,user.id,'submission.delete','submission',id,{code:row.code,deleted_uploads:(uploads.results||[]).length,ctt_record_removed:true},request);return json({ok:true,deleted_uploads:(uploads.results||[]).length});
-    }
+    if(request.method==='PUT'){const b=await readJson(request),status=SUBMISSION_STATUSES.has(b.status)?b.status:row.status,note=cleanText(b.internal_notes??row.internal_notes,5000),assignee=b.assignee_id?Number(b.assignee_id):user.id;await env.DB.prepare(`UPDATE form_submissions SET status=?,internal_notes=?,assignee_id=?,updated_at=? WHERE id=?`).bind(status,note,assignee,now(),id).run();let emailSent=0;if(bool(b.send_email)&&validEmail(row.email)){const msg=cleanText(b.email_message||`Trạng thái hồ sơ ${row.code} đã được cập nhật thành ${status}.`,3000),m=await sendMail(env,{to:row.email,subject:`Cập nhật hồ sơ ${row.code} · Xanh Sky First`,html:`<p>Xin chào ${escapeHtml(row.full_name)},</p><p>${escapeHtml(msg).replace(/\n/g,'<br>')}</p>`});emailSent=m.sent?1:0;}await env.DB.prepare(`INSERT INTO submission_events(submission_id,event_type,old_status,new_status,note,actor_user_id,email_sent,created_at) VALUES(?,'status_update',?,?,?,?,?,?)`).bind(id,row.status,status,cleanText(b.event_note||'',2000),user.id,emailSent,now()).run();await audit(env,user.id,'submission.update','submission',id,{status,email_sent:!!emailSent},request);return json({ok:true});}
+    if(request.method==='DELETE'){assert(ADMIN_ROLES.has(user.role),403,'Chỉ quản trị viên được xóa hồ sơ.');const uploads=await env.DB.prepare(`SELECT r2_key FROM form_uploads WHERE claimed_submission_id=?`).bind(id).all();for(const x of uploads.results||[]){try{await env.STORAGE.delete(x.r2_key)}catch{}}await env.DB.prepare(`DELETE FROM form_submissions WHERE id=?`).bind(id).run();await audit(env,user.id,'submission.delete','submission',id,{code:row.code,deleted_uploads:(uploads.results||[]).length},request);return json({ok:true});}
   }
   if(action==='submission-file'&&p[2]&&request.method==='GET'){
     requireFeature(user,'submissions');const id=Number(p[2]),row=await env.DB.prepare(`SELECT * FROM form_uploads WHERE id=? AND claimed_submission_id IS NOT NULL`).bind(id).first();assert(row,404,'Không tìm thấy tệp hồ sơ.');const obj=await env.STORAGE.get(row.r2_key);assert(obj,404,'Tệp không còn trong storage.');const h=new Headers({'Content-Type':row.mime_type,'Content-Disposition':`attachment; filename*=UTF-8''${encodeURIComponent(row.filename)}`,'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'});return new Response(obj.body,{headers:h});

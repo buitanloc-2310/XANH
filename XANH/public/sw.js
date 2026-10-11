@@ -1,5 +1,5 @@
-const CACHE='xanh-shell-v5';
-const CORE=['/','/index.html','/styles.css','/app.js','/ui-safety.js','/assets/xanh-sky-first-logo.png'];
+const CACHE='xanh-shell-v6';
+const CORE=['/','/index.html','/styles.css','/app.js','/ui-safety.js','/assets/xanh-sky-first-logo.png','/assets/dau-an-xanh-landscape.webp'];
 self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(CORE)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
 self.addEventListener('fetch',e=>{

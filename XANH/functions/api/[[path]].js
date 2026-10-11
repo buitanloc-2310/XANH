@@ -9,6 +9,9 @@ const FORM_STATUSES = new Set(['draft','open','closed','archived']);
 const SUBMISSION_STATUSES = new Set(['new','reviewing','needs_info','approved','rejected','completed']);
 const USER_ROLES = new Set(['root_admin','administrator','content_editor','project_manager','volunteer_coordinator','viewer']);
 const ADMIN_ROLES = new Set(['root_admin','administrator']);
+const IMPACT_DISPLAY_KEYS = ['participants','completed_activities','waste_tons','completed_programs','education_sessions','green_points','partner_units'];
+const IMPACT_ICON_KEYS = new Set(['users','sprout','recycle','clipboard-check','book-open','map-pin','handshake']);
+const IMPACT_D1_KEYS = new Set(['completed_activities','waste_tons','completed_programs','education_sessions']);
 
 function routeParts(request) {
   const u = new URL(request.url);
@@ -312,7 +315,7 @@ async function handlePublic(env, request, action) {
     assert(row,404,'Không tìm thấy nội dung.'); return json({ok:true,item:contentOut(row)});
   }
   if (action === 'impact' && request.method==='GET') {
-    const [r,cfgRows]=await Promise.all([
+    const [r,cfgRows,programs,education]=await Promise.all([
       env.DB.prepare(`SELECT COUNT(DISTINCT CASE WHEN verified=1 AND completed=1 AND locality<>'' THEN locality END) AS localities,
         COALESCE(SUM(CASE WHEN verified=1 THEN confirmed_participants ELSE 0 END),0) AS participants,
         COALESCE(SUM(CASE WHEN verified=1 AND completed=1 THEN 1 ELSE 0 END),0) AS completed_activities,
@@ -320,12 +323,23 @@ async function handlePublic(env, request, action) {
         COALESCE(SUM(CASE WHEN verified=1 THEN waste_tons ELSE 0 END),0) AS waste_tons,
         COALESCE(SUM(CASE WHEN verified=1 THEN community_reached ELSE 0 END),0) AS community_reached,
         SUM(CASE WHEN verified=1 THEN 1 ELSE 0 END) AS verified_records FROM impact_records`).first(),
-      env.DB.prepare(`SELECT * FROM impact_counter_config ORDER BY sort_order,metric_key`).all(),
+      env.DB.prepare(`SELECT * FROM impact_counter_config WHERE metric_key IN (${IMPACT_DISPLAY_KEYS.map(()=>'?').join(',')}) ORDER BY sort_order,metric_key`).bind(...IMPACT_DISPLAY_KEYS).all(),
+      env.DB.prepare(`SELECT COUNT(*) AS total FROM content_items WHERE type IN ('project','initiative') AND status='completed'`).first(),
+      env.DB.prepare(`SELECT COUNT(DISTINCT c.id) AS total FROM content_items c JOIN impact_records i ON i.activity_id=c.id WHERE c.type='activity' AND c.status='completed' AND i.verified=1 AND i.completed=1 AND LOWER(TRIM(COALESCE(c.category,''))) IN ('giáo dục môi trường','hoạt động giáo dục môi trường')`).first(),
     ]);
     const impact={localities:Number(r.localities||0),participants:Number(r.participants||0),completed_activities:Number(r.completed_activities||0),volunteer_hours:Number(r.volunteer_hours||0),waste_tons:Number(r.waste_tons||0),community_reached:Number(r.community_reached||0)};
     const verifiedCount=Number(r.verified_records||0);
-    const sourceValues={participants:impact.participants,completed_activities:impact.completed_activities,waste_tons:impact.waste_tons,community_reached:impact.community_reached};
-    const counters=(cfgRows.results||[]).map(c=>({...c,value:verifiedCount>0?Number(sourceValues[c.metric_key]||0):null,duration_ms:Math.min(12000,Math.max(300,Number(c.duration_ms||1800))),delay_ms:Math.min(5000,Math.max(0,Number(c.delay_ms||0))),hold_ms:Math.min(60000,Math.max(0,Number(c.hold_ms||0))),enabled:Number(c.enabled)===1}));
+    // Each D1-backed metric has an explicit counting rule. Metrics without an
+    // existing trustworthy source return null until Admin chooses manual input.
+    const sourceValues={participants:impact.participants,completed_activities:impact.completed_activities,waste_tons:impact.waste_tons,completed_programs:Number(programs.total||0),education_sessions:Number(education.total||0)};
+    const counters=(cfgRows.results||[]).map(c=>{
+      let value=null;
+      if(c.data_source==='manual') value=c.manual_value===null||c.manual_value===undefined?null:Number(c.manual_value);
+      else if(c.data_source==='d1'&&IMPACT_D1_KEYS.has(c.metric_key)&&Object.prototype.hasOwnProperty.call(sourceValues,c.metric_key)) {
+        value=['completed_activities','waste_tons'].includes(c.metric_key)&&verifiedCount===0?null:Number(sourceValues[c.metric_key]||0);
+      }
+      return {...c,value,duration_ms:Math.min(12000,Math.max(300,Number(c.duration_ms||1800))),delay_ms:Math.min(5000,Math.max(0,Number(c.delay_ms||0))),hold_ms:Math.min(60000,Math.max(0,Number(c.hold_ms||0))),decimal_places:Math.min(3,Math.max(0,Number(c.decimal_places||0))),enabled:Number(c.enabled)===1};
+    });
     return json({ok:true,impact,counters},200,{'Cache-Control':'no-store'});
   }
   if (action === 'contact' && request.method==='POST') {
@@ -503,19 +517,37 @@ async function handleAdmin(env, request, action, p) {
     if(request.method==='PUT') { const b=await readJson(request),clean=sanitizeNavigation(b.item||b.navigation||b); await settingsSet(env,'navigation',clean); await audit(env,user.id,'navigation.publish','navigation','header-footer',{roots:clean.items.length},request); return json({ok:true,item:clean}); }
   }
   if(action==='impact-display') {
-    assert(ADMIN_ROLES.has(user.role)||user.role==='project_manager',403,'Bạn không có quyền cấu hình bộ đếm Impact.');
-    if(request.method==='GET'){const rows=await env.DB.prepare(`SELECT * FROM impact_counter_config ORDER BY sort_order,metric_key`).all();return json({ok:true,items:rows.results});}
+    assert(ADMIN_ROLES.has(user.role),403,'Chỉ Admin Tổng / Administrator được cấu hình các thẻ Dấu ấn xanh.');
+    if(request.method==='GET'){
+      const rows=await env.DB.prepare(`SELECT * FROM impact_counter_config WHERE metric_key IN (${IMPACT_DISPLAY_KEYS.map(()=>'?').join(',')}) ORDER BY sort_order,metric_key`).bind(...IMPACT_DISPLAY_KEYS).all();
+      return json({ok:true,items:rows.results});
+    }
     if(request.method==='PUT'){
       const b=await readJson(request),items=Array.isArray(b.items)?b.items:[];
-      const allowed=new Set(['participants','completed_activities','waste_tons','community_reached']);
-      assert(items.length===4&&items.every(x=>allowed.has(String(x.metric_key))),400,'Cấu hình phải bao gồm đúng bốn chỉ số Impact được hỗ trợ.');
-      const saved=[];for(const x of items){const key=String(x.metric_key),label=cleanText(x.label,100),description=cleanText(x.description,300),start=Math.max(0,Math.min(1000000000,Number(x.start_value||0))),duration=Math.max(300,Math.min(12000,Number(x.duration_ms||1800))),delay=Math.max(0,Math.min(5000,Number(x.delay_ms||0))),hold=Math.max(0,Math.min(60000,Number(x.hold_ms||0))),enabled=bool(x.enabled)?1:0,order=Math.max(0,Math.min(20,Number(x.sort_order||0)));
-        assert(label.length>=2,400,'Nhãn số liệu cần ít nhất 2 ký tự.');
-        await env.DB.prepare(`UPDATE impact_counter_config SET label=?,description=?,start_value=?,duration_ms=?,delay_ms=?,hold_ms=?,enabled=?,sort_order=?,updated_at=? WHERE metric_key=?`).bind(label,description,start,duration,delay,hold,enabled,order,now(),key).run();
+      const submitted=items.map(x=>String(x.metric_key));
+      assert(items.length===7&&new Set(submitted).size===7&&IMPACT_DISPLAY_KEYS.every(k=>submitted.includes(k)),400,'Cấu hình phải bao gồm đủ 7 chỉ số đã chốt, không được trùng.');
+      const orders=items.map(x=>Number(x.sort_order));
+      assert(orders.every(n=>Number.isInteger(n)&&n>=1&&n<=7)&&new Set(orders).size===7,400,'Thứ tự hiển thị phải là các số từ 1 đến 7, không trùng nhau.');
+      const saved=[];
+      for(const x of items){
+        const key=String(x.metric_key),label=cleanText(x.label,100),description=cleanText(x.description,300),unit=cleanText(x.unit,30),icon=String(x.icon||'sprout'),source=String(x.data_source||'d1'),rawManual=x.manual_value;
+        const manualValue=rawManual===null||rawManual===undefined||rawManual===''?null:Number(rawManual);
+        const decimalPlaces=Math.max(0,Math.min(3,Math.trunc(Number(x.decimal_places||0))));
+        const duration=Math.max(300,Math.min(12000,Number(x.duration_ms||1800))),delay=Math.max(0,Math.min(5000,Number(x.delay_ms||0))),order=Number(x.sort_order),enabled=bool(x.enabled)?1:0;
+        assert(label.length>=2,400,'Tên chỉ số cần ít nhất 2 ký tự.');
+        assert(IMPACT_ICON_KEYS.has(icon),400,'Biểu tượng không được hỗ trợ.');
+        assert(['d1','manual'].includes(source),400,'Nguồn dữ liệu không hợp lệ.');
+        assert(manualValue===null||(Number.isFinite(manualValue)&&manualValue>=0&&manualValue<=1000000000000),400,'Giá trị thủ công phải là số không âm hợp lệ.');
+        // The animation always begins at 0. Values and units are stored separately.
+        await env.DB.prepare(`INSERT INTO impact_counter_config(metric_key,label,description,start_value,duration_ms,delay_ms,hold_ms,enabled,sort_order,updated_at,unit,icon,data_source,manual_value,decimal_places)
+          VALUES(?,?,?,?,?,?,0,?,?,?,?,?,?,?,?)
+          ON CONFLICT(metric_key) DO UPDATE SET label=excluded.label,description=excluded.description,start_value=0,duration_ms=excluded.duration_ms,delay_ms=excluded.delay_ms,hold_ms=0,enabled=excluded.enabled,sort_order=excluded.sort_order,updated_at=excluded.updated_at,unit=excluded.unit,icon=excluded.icon,data_source=excluded.data_source,manual_value=excluded.manual_value,decimal_places=excluded.decimal_places`)
+          .bind(key,label,description,0,duration,delay,enabled,order,now(),unit,icon,source,manualValue,decimalPlaces).run();
         saved.push(key);
       }
       await audit(env,user.id,'impact.counters.update','impact','counter-config',{metrics:saved},request);
-      const rows=await env.DB.prepare(`SELECT * FROM impact_counter_config ORDER BY sort_order,metric_key`).all();return json({ok:true,items:rows.results});
+      const rows=await env.DB.prepare(`SELECT * FROM impact_counter_config WHERE metric_key IN (${IMPACT_DISPLAY_KEYS.map(()=>'?').join(',')}) ORDER BY sort_order,metric_key`).bind(...IMPACT_DISPLAY_KEYS).all();
+      return json({ok:true,items:rows.results});
     }
   }
 

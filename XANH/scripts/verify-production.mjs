@@ -3,8 +3,8 @@ import { resolve, relative } from 'node:path';
 const root = resolve(new URL('..', import.meta.url).pathname);
 const mustExist = [
   'functions/api/[[path]].js','functions/sitemap.xml.js','functions/_lib/crypto.js','functions/_lib/auth.js','functions/_lib/media.js',
-  'migrations/0001_initial.sql','migrations/0002_people_forms.sql','migrations/0003_production_hardening.sql','migrations/0004_seed_hanoi_volunteer_form.sql','migrations/0005_form_builder_single_source.sql','migrations/0006_navigation_impact_content.sql','migrations/0007_ctt_integration_outbox.sql','migrations/0008_content_editorial_refresh.sql',
-  'public/index.html','public/app.js','public/ui-safety.js','public/styles.css','public/sw.js','public/assets/xanh-sky-first-logo.png',
+  'migrations/0001_initial.sql','migrations/0002_people_forms.sql','migrations/0003_production_hardening.sql','migrations/0004_seed_hanoi_volunteer_form.sql','migrations/0005_form_builder_single_source.sql','migrations/0006_navigation_impact_content.sql','migrations/0007_ctt_integration_outbox.sql','migrations/0008_content_editorial_refresh.sql','migrations/0009_impact_display_full_control.sql',
+  'public/index.html','public/app.js','public/ui-safety.js','public/styles.css','public/sw.js','public/assets/xanh-sky-first-logo.png','public/assets/dau-an-xanh-landscape.webp',
   'package.json','wrangler.jsonc','README.md','SECURITY.md','FINAL_ACCEPTANCE.md'
 ];
 let failed = false;

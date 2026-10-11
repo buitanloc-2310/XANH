@@ -110,3 +110,8 @@ Sau deploy cần smoke-test trên Cloudflare thật các phần phụ thuộc bi
 ### Rebuild upgrade (migrations 0006–0009)
 
 Các migration `0006`–`0009` bổ sung điều hướng/CMS, outbox tích hợp CTT, làm mới nội dung mặc định có điều kiện để không ghi đè nội dung Admin đã chỉnh, và bảy cấu hình Dấu ấn xanh. Trước khi triển khai production, sao lưu D1 và đối chiếu migration ledger/schema. Hướng dẫn an toàn nằm trong `DEPLOYMENT_STEPS.md`; không chạy lại migration đã áp dụng và không thực hiện song song SQL Console với Wrangler cho cùng migration. Xem `FINAL_ACCEPTANCE.md` và `FINAL_AUDIT_20261011.md` để phân biệt test local với các bước phải xác minh trên production.
+
+
+## WordPress Tổng (CMS Workspace)
+
+Bản cập nhật ngày 11/10/2026 chuyển `/admin/wordpress` thành khu làm việc chỉnh sửa tại chỗ dùng CMS hiện có (Pages, Content, Navigation/Footer, Media, Appearance/SEO, Impact 7 cards và Forms). Đây là CMS tự xây dựng dùng Cloudflare Pages, D1 và R2; không phải cài WordPress/PHP độc lập. Xem `WORDPRESS_TONG_AUDIT_FIX_20261011.md` và `WORDPRESS_TONG_QUICK_GUIDE_20261011.md`.

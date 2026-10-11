@@ -169,12 +169,103 @@ footer{background-image:var(--footer-visual,none),radial-gradient(ellipse at 94%
 @media(max-width:760px){.impact{padding:48px 20px;background-image:linear-gradient(180deg,rgba(239,250,255,.97),rgba(239,255,249,.9)),var(--impact-visual,url('/assets/dau-an-xanh-landscape.webp')),linear-gradient(115deg,#e8f8ff,#f5fffb 72%);background-size:cover,100% auto,cover;background-position:center,center top,center}.impact-intro h2{font-size:clamp(32px,7vw,44px)}.metrics{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.metrics .metric-card{min-height:230px;padding:18px 12px 16px!important}.metric-icon{width:66px;height:66px;flex-basis:66px}.metric-icon-svg{width:33px;height:33px}.metrics .metric-value strong{font-size:clamp(28px,6vw,38px)}.metric-unit{font-size:12px}.metrics .metric-label{font-size:13px}.impact-admin-card{padding:14px!important}.impact-admin-card>header{align-items:flex-start;flex-wrap:wrap}.impact-admin-card>header .choice{margin-left:auto}.impact-timing{grid-template-columns:1fr 1fr}.impact-timing label:last-child{grid-column:1/-1}}
 @media(max-width:440px){.metrics{grid-template-columns:1fr}.metrics .metric-card{min-height:190px}.metric-icon{margin:8px auto}.impact-intro h2{font-size:32px}.impact-admin-card .form-grid.two{grid-template-columns:1fr}.impact-timing{grid-template-columns:1fr}.impact-timing label:last-child{grid-column:auto}.impact-order-field{max-width:none}}
 
-/* WordPress Tổng: one front door to the existing CMS modules. */
-.wp-overview-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:18px 0 26px}.wp-overview-stats>div{padding:20px 22px;border:1px solid #dce9ed;border-radius:18px;background:linear-gradient(135deg,#fff,#f1fbf8)}.wp-overview-stats span{display:block;color:#617b8a;font-size:13px;font-weight:700}.wp-overview-stats strong{display:block;color:#073e5a;font-size:32px;line-height:1.25;margin-top:4px}.wp-hub-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.wp-hub-card{display:flex;flex-direction:column;align-items:flex-start;min-width:0;min-height:220px;padding:23px;border:1px solid #dce9ed;border-radius:20px;background:#fff;box-shadow:0 8px 28px rgba(5,43,77,.045);transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease}.wp-hub-card:hover,.wp-hub-card:focus-visible{transform:translateY(-3px);border-color:#9edbca;box-shadow:0 16px 38px rgba(5,43,77,.09);outline:none}.wp-hub-icon{display:grid;place-items:center;width:42px;height:42px;border-radius:13px;background:#e5f8f1;color:#087b65;font-size:23px;font-weight:800}.wp-hub-title{margin-top:15px;color:#092e4b;font-size:18px;font-weight:850;line-height:1.3}.wp-hub-desc{margin-top:8px;color:#5e7483;font-size:13px;line-height:1.55}.wp-hub-link{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;margin-top:auto;padding-top:18px;color:#087c70;font-size:13px;font-weight:800}.wp-hub-note{margin-top:20px;padding:18px 20px;border:1px solid #d7ebe5;border-radius:16px;background:#f0faf6;color:#345d5a}.wp-hub-note p{margin:5px 0 0;font-size:13px;line-height:1.6}@media(max-width:1000px){.wp-hub-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:620px){.wp-hub-grid,.wp-overview-stats{grid-template-columns:1fr}.wp-hub-card{min-height:190px}.wp-overview-stats>div{padding:15px 18px}}
-
-.wp-overview-stats{grid-template-columns:repeat(3,minmax(0,1fr))}
-.wp-overview-stats>div{min-width:0}
-.wp-overview-stats small{display:block;margin-top:5px;color:#627e89;font-size:12px;line-height:1.4}
+/* Shared inline error state for WordPress CMS API failures. */
 .wp-hub-errors{margin:0 0 18px;padding:16px 18px;border:1px solid #e5b4a8;border-radius:14px;background:#fff7f4;color:#833e30}
 .wp-hub-errors p{margin:5px 0 0;font-size:13px;line-height:1.55}
-@media(max-width:620px){.wp-overview-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* WordPress Tổng is an in-place CMS workbench, not a directory of links to other admin routes. */
+.wp-workspace{display:flex;flex-direction:column;gap:18px;min-width:0}
+.wp-workspace-intro{display:flex;align-items:flex-start;justify-content:space-between;gap:22px;padding:26px 28px;border:1px solid #d9e9eb;border-radius:22px;background:linear-gradient(120deg,#f5fffb 0%,#f3f9ff 72%,#fff 100%)}
+.wp-workspace-intro h1{margin:5px 0 8px;color:#073957;font-size:clamp(26px,3vw,36px);line-height:1.15;letter-spacing:-.025em}
+.wp-workspace-intro p{max-width:800px;margin:0;color:#516d7b;line-height:1.65}
+.wp-workspace-status{display:flex;align-items:center;gap:8px;flex:none;padding:9px 12px;border:1px solid #cce9df;border-radius:999px;background:#fff;color:#176b58;font-size:12px;font-weight:800}
+.wp-status-dot{width:8px;height:8px;border-radius:100%;background:#19a77a;box-shadow:0 0 0 4px #dff7ed}
+.wp-workspace-tabs{display:flex;align-items:center;gap:7px;overflow-x:auto;padding:5px 2px 10px;border-bottom:1px solid #dfe9ed;scrollbar-width:thin}
+.wp-workspace-tab{display:inline-flex;align-items:center;gap:8px;flex:none;min-height:42px;padding:10px 14px;border:1px solid transparent;border-radius:12px;background:transparent;color:#456371;font-size:13px;font-weight:750;white-space:nowrap;cursor:pointer}
+.wp-workspace-tab:hover{background:#f0f8f8;color:#075a59}
+.wp-workspace-tab.active{border-color:#bfe8d8;background:#e8f9f2;color:#086b59;box-shadow:inset 0 0 0 1px rgba(8,107,89,.035)}
+.wp-workspace-tab span{font-size:17px;line-height:1}
+.wp-workspace-panel{min-width:0;padding:22px;border:1px solid #e0eaed;border-radius:20px;background:#fff;box-shadow:0 8px 30px rgba(10,49,71,.035)}
+.wp-workspace-panel>.admin-head:first-child{margin-top:0}
+.wp-workspace-panel .admin-head h1{font-size:24px}
+.wp-workspace-footnote{margin:0;color:#70848d;font-size:12px;line-height:1.6}
+.wp-overview-head{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:20px}
+.wp-overview-head h2{margin:0;color:#0b3651;font-size:22px}
+.wp-overview-head p{margin:6px 0 0;color:#637c87;font-size:13px;line-height:1.55}
+.wp-overview-actions{display:flex;gap:8px;flex-wrap:wrap}
+.wp-summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:20px}
+.wp-summary-card{min-width:0;padding:19px 20px;border:1px solid #dce9ec;border-radius:16px;background:linear-gradient(135deg,#fff,#f7fcfc)}
+.wp-summary-card>span{display:block;color:#547481;font-size:12px;font-weight:750}
+.wp-summary-card>strong{display:block;margin-top:7px;color:#073c59;font-size:27px;line-height:1.2;overflow-wrap:anywhere}
+.wp-summary-card>small{display:block;margin-top:5px;color:#728992;font-size:11px;line-height:1.45}
+.wp-overview-columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:10px}
+.wp-overview-list{min-width:0;padding:17px;border:1px solid #e1ebee;border-radius:16px;background:#fff}
+.wp-list-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
+.wp-list-head h3{margin:0;color:#103d55;font-size:16px}
+.wp-quick-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid #edf2f4}
+.wp-quick-row>div{min-width:0;display:flex;flex-direction:column;gap:4px}
+.wp-quick-row b{overflow:hidden;color:#153f55;font-size:13px;text-overflow:ellipsis;white-space:nowrap}
+.wp-quick-row small{color:#7a9099;font-size:11px;overflow-wrap:anywhere}
+.wp-quick-action{flex:none;font-size:11px!important;padding:7px 10px!important}
+.wp-workflow-note{margin-top:18px;padding:16px 18px;border:1px solid #d8ece5;border-radius:14px;background:#f4fcf8;color:#315f57}
+.wp-workflow-note p{margin:5px 0 0;font-size:12px;line-height:1.6}
+.wp-content-type-tabs{display:flex;gap:7px;overflow-x:auto;margin:2px 0 18px;padding:2px 0 8px}
+.wp-content-type-tabs button{flex:none;padding:9px 13px;border:1px solid #d9e6eb;border-radius:10px;background:#fff;color:#4e6877;font-size:12px;font-weight:750;cursor:pointer;white-space:nowrap}
+.wp-content-type-tabs button.active{border-color:#9bd9c4;background:#eaf9f2;color:#0b6f5c}
+.wp-workspace-panel .table{max-width:100%;overflow-x:auto}
+.wp-workspace-panel .settings-card{margin-top:8px}
+.wp-workspace-panel .media-grid{grid-template-columns:repeat(auto-fill,minmax(165px,1fr))}
+@media(max-width:1024px){.wp-workspace-panel{padding:17px}.wp-workspace-intro{padding:22px}.wp-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){.wp-workspace-intro{flex-direction:column}.wp-workspace-status{align-self:flex-start}.wp-overview-head{align-items:flex-start;flex-direction:column}.wp-overview-actions{width:100%}.wp-overview-columns{grid-template-columns:1fr}.wp-workspace-panel{padding:12px;border-radius:15px}.wp-summary-card{padding:15px}.wp-summary-card>strong{font-size:24px}.wp-quick-row{align-items:flex-start}.wp-quick-row b{white-space:normal}.wp-quick-action{white-space:nowrap}}
+@media(max-width:420px){.wp-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.wp-summary-card{padding:12px}.wp-summary-card>strong{font-size:21px}.wp-overview-actions .btn{flex:1}.wp-workspace-tab{padding:9px 11px}}
+
+
+/* MASTER ENGINEERING ORDER — scoped Design System, timer blocks, and stable Admin workspace */
+body{font-family:var(--site-font-family,Arial,"Be Vietnam Pro",Inter,system-ui,sans-serif);font-size:var(--site-font-size,16px);background:var(--bg,#f6fbff);color:var(--ink,#123b70)}
+.top{background:var(--site-header-bg,#ffffffeb)}
+footer{background:var(--site-footer-bg,#031e34)}
+.card,.story,.person,.form-card,.modern-form,.registration-card{background:var(--site-card-bg,#fff)}
+.btn{border-radius:var(--site-button-radius,999px)}
+.section{padding-top:clamp(32px,calc(var(--site-section-space,100px) * .7),160px);padding-bottom:clamp(32px,calc(var(--site-section-space,100px) * .7),160px)}
+.hero-scenic{background-image:linear-gradient(90deg,rgba(248,253,255,var(--site-hero-overlay,.82)) 0%,rgba(241,251,255,calc(var(--site-hero-overlay,.82) * .96)) 42%,rgba(232,250,248,.4) 72%,rgba(232,250,248,.15) 100%),var(--hero-image)}
+.card,.story,.person,.form-card{box-shadow:0 12px 40px rgba(5,43,77,var(--site-shadow-strength,.08))}
+.admin{height:100vh;min-height:100dvh;overflow:hidden}
+.admin-main{height:100vh;height:100dvh;min-height:0;overflow:hidden;display:flex;flex-direction:column}
+.admin-main>header{flex:0 0 70px}
+.admin-body{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable;max-width:none;padding:clamp(16px,2.2vw,32px)}
+.wp-workspace-panel{min-height:50vh}
+.theme-scope-bar{padding:16px;margin-bottom:22px;background:#f1f8fb;border:1px solid #d7e9f0;border-radius:16px}
+.theme-image-field{min-width:0;display:flex;flex-direction:column;gap:6px}
+.theme-image-field.full{grid-column:1/-1}
+.theme-image-field label{margin:0}
+.theme-image-field .btn{align-self:flex-start}
+.countdown-block{max-width:1180px;margin:28px auto;padding:clamp(22px,4vw,42px);border:1px solid #cfe7ef;border-radius:24px;background:linear-gradient(125deg,#f2fbff,#f2fff8);display:grid;grid-template-columns:minmax(0,1fr) auto;gap:28px;align-items:center;box-shadow:0 12px 34px rgba(5,43,77,.06)}
+.countdown-copy h3{margin:8px 0;font-size:clamp(22px,3vw,34px);color:var(--navy)}
+.countdown-copy p{margin:8px 0;color:var(--muted)}
+.countdown-clock{display:grid;grid-template-columns:repeat(4,minmax(62px,1fr));gap:8px}
+.countdown-clock>div{min-width:0;padding:13px 10px;text-align:center;background:#fff;border:1px solid #dcecf1;border-radius:14px}
+.countdown-clock strong{display:block;font-size:clamp(22px,3vw,34px);font-variant-numeric:tabular-nums;color:var(--blue);line-height:1.15}
+.countdown-clock span{display:block;margin-top:6px;font-size:11px;color:var(--muted)}
+.countdown-expired-message{font-weight:800;color:#a3313a!important}
+.countdown-block.is-expired{border-color:#e6c8cb;background:#fff8f8}
+.countdown-block.is-expired .countdown-clock{opacity:.5}
+.countdown-cta.is-disabled{opacity:.5;pointer-events:none}
+.form-expired{max-width:760px}
+@media(max-width:760px){.countdown-block{grid-template-columns:1fr;gap:16px}.countdown-clock{grid-template-columns:repeat(4,minmax(0,1fr))}.countdown-clock>div{padding:12px 5px}.countdown-clock strong{font-size:clamp(18px,5vw,28px)}.admin{height:auto;min-height:100dvh;overflow:visible}.admin-main{height:auto;min-height:100dvh;overflow:visible}.admin-body{overflow:visible;max-width:100%}}
+@media(prefers-reduced-motion:reduce){.countdown-block,.countdown-clock *{scroll-behavior:auto!important;transition:none!important}}
+
+/* Complete Admin-controlled theme tokens: links, secondary buttons, borders and keyboard focus. */
+.btn.primary,.primary{background:linear-gradient(110deg,var(--blue,#087ff5),var(--site-button-end,var(--green,#10ad83)))}
+.glass{background:var(--site-button-secondary,#ffffffb3);border-color:var(--site-border,var(--line,#dce7ec))}
+input,textarea,select{border-color:var(--site-border,#cbdce3)}
+input:focus,textarea:focus,select:focus{border-color:var(--site-focus,var(--blue,#087ff5));box-shadow:0 0 0 3px color-mix(in srgb,var(--site-focus,var(--blue,#087ff5)) 13%,transparent)}
+.top nav a:hover,.foot-grid a:hover,.prose a:hover,.page-hero a:not(.btn):hover{color:var(--site-link-hover,var(--green,#10ad83))}
+.prose a,.page-hero a:not(.btn),.foot-grid a{color:var(--site-link,var(--blue,#087ff5))}
+:focus-visible{outline:2px solid var(--site-focus,var(--blue,#087ff5));outline-offset:3px}
+
+/* Heading typography is controlled separately from body typography in the Design System. */
+h1,h2,h3,h4,h5,h6{font-family:var(--site-heading-font-family,var(--site-font-family,Arial,sans-serif))}
+
+.countdown-phase-message{padding:10px 14px;border-radius:12px;background:#eaf7f1;color:#096449;font-weight:750}.countdown-block.is-warning{border-color:#e5b86a;background:linear-gradient(135deg,#fffaf0,#fff)}.countdown-block.is-before-start{border-color:#abd9e5}.countdown-block.is-opened{border-color:#a7d9ba}.countdown-refresh-form{margin-top:12px}.form-before-open{border-style:dashed}
+
+.block-drag-handle,.home-drag-handle{display:inline-flex;align-items:center;justify-content:center;min-width:26px;padding:5px;border-radius:7px;background:#e9f4f2;color:#4a6b6e;cursor:grab;user-select:none;font-weight:900;letter-spacing:-.18em}.block-drag-handle:active,.home-drag-handle:active{cursor:grabbing}.content-block.drop-target,.home-block-editor.drop-target{outline:2px dashed #159b70;outline-offset:3px}.content-block.is-dragging,.home-block-editor.is-dragging{opacity:.55}

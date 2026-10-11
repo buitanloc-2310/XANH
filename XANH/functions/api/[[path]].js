@@ -225,6 +225,13 @@ function sanitizeFields(input) {
     };
   });
 }
+function validateFormWindow(opensAt, closesAt) {
+  const start = opensAt ? new Date(opensAt).getTime() : null;
+  const end = closesAt ? new Date(closesAt).getTime() : null;
+  assert(!opensAt || Number.isFinite(start),400,'Thời điểm mở biểu mẫu không hợp lệ.');
+  assert(!closesAt || Number.isFinite(end),400,'Thời điểm đóng biểu mẫu không hợp lệ.');
+  assert(start===null || end===null || end>start,400,'Thời điểm đóng phải sau thời điểm mở.');
+}
 function sanitizeFormSettings(input) {
   const x = input && typeof input==='object' ? input : {};
   return {
@@ -234,6 +241,13 @@ function sanitizeFormSettings(input) {
     closed_message: cleanText(x.closed_message || 'Biểu mẫu hiện không nhận thêm hồ sơ.', 1000),
     require_guardian_consent: bool(x.require_guardian_consent),
     guardian_note: cleanText(x.guardian_note, 1200),
+    countdown_enabled: x.countdown_enabled === undefined ? true : bool(x.countdown_enabled),
+    countdown_title: cleanText(x.countdown_title || 'Thời gian còn lại để đăng ký', 160),
+    countdown_expired_title: cleanText(x.countdown_expired_title || 'Biểu mẫu đã đóng', 160),
+    countdown_expired_message: cleanText(x.countdown_expired_message || x.closed_message || 'Biểu mẫu hiện không nhận thêm hồ sơ.', 1000),
+    countdown_warning_hours: Math.max(0,Math.min(720,Number.isFinite(Number(x.countdown_warning_hours))?Number(x.countdown_warning_hours):24)),
+    countdown_warning_message: cleanText(x.countdown_warning_message || 'Sắp hết hạn nhận hồ sơ.', 500),
+    countdown_timezone: ['Asia/Ho_Chi_Minh','UTC','Asia/Bangkok','Asia/Singapore'].includes(x.countdown_timezone) ? x.countdown_timezone : 'Asia/Ho_Chi_Minh',
   };
 }
 async function publishDueContent(env) {
@@ -389,9 +403,10 @@ async function handlePublic(env, request, action) {
   }
   if (action === 'form' && request.method==='GET') {
     const slug=cleanText(u.searchParams.get('slug'),140); const row=await env.DB.prepare(`SELECT * FROM forms WHERE slug=? AND status='open' LIMIT 1`).bind(slug).first(); assert(row,404,'Biểu mẫu chưa mở hoặc không tồn tại.');
-    if(row.opens_at) assert(new Date(row.opens_at)<=new Date(),409,'Biểu mẫu chưa đến thời gian mở.');
-    if(row.closes_at) assert(new Date(row.closes_at)>new Date(),409,asJson(row.settings_json,{}).closed_message || 'Biểu mẫu đã hết hạn.');
-    return json({ok:true,item:{...row,fields:asJson(row.fields_json,[]),settings:asJson(row.settings_json,{}),cover_url:row.cover_media_id?`/api/media/${row.cover_media_id}`:null}});
+    const formSettings=sanitizeFormSettings(asJson(row.settings_json,{}));
+    const isNotOpen=!!row.opens_at && new Date(row.opens_at)>new Date();
+    const isExpired=!!row.closes_at && new Date(row.closes_at)<=new Date();
+    return json({ok:true,item:{...row,is_not_open:isNotOpen,is_expired:isExpired,fields:asJson(row.fields_json,[]),settings:formSettings,cover_url:row.cover_media_id?`/api/media/${row.cover_media_id}`:null}});
   }
   if (action === 'submission-lookup' && request.method==='GET') {
     await rateLimit(env,request,'submission-lookup',30,3600);
@@ -690,12 +705,12 @@ async function handleAdmin(env, request, action, p) {
   if(action==='forms'){
     requireFeature(user,'forms',write);
     if(request.method==='GET'){const rows=await env.DB.prepare(`SELECT * FROM forms ORDER BY updated_at DESC`).all();return json({ok:true,items:rows.results.map(x=>({...x,fields:sanitizeFields(asJson(x.fields_json,[])),settings:sanitizeFormSettings(asJson(x.settings_json,{})),cover_url:x.cover_media_id?`/api/media/${x.cover_media_id}`:null}))});}
-    if(request.method==='POST'){const b=await readJson(request),name=cleanText(b.name,200),slug=safeSlug(b.slug||name),t=now();assert(name&&slug,400,'Tên/slug không hợp lệ.');const cover=await assertMediaImage(env,b.cover_media_id),fields=sanitizeFields(b.fields),settings=sanitizeFormSettings(b.settings);const r=await env.DB.prepare(`INSERT INTO forms(slug,name,description,kind,status,fields_json,settings_json,cover_media_id,opens_at,closes_at,capacity,created_by,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(slug,name,cleanText(b.description,5000),cleanText(b.kind||'general',80),FORM_STATUSES.has(b.status)?b.status:'draft',JSON.stringify(fields),JSON.stringify(settings),cover,b.opens_at||null,b.closes_at||null,b.capacity?Number(b.capacity):null,user.id,user.id,t,t).run();await audit(env,user.id,'form.create','form',r.meta.last_row_id,{slug,field_count:fields.length},request);return json({ok:true,id:r.meta.last_row_id},201);}
+    if(request.method==='POST'){const b=await readJson(request),name=cleanText(b.name,200),slug=safeSlug(b.slug||name),t=now();assert(name&&slug,400,'Tên/slug không hợp lệ.');validateFormWindow(b.opens_at||null,b.closes_at||null);const cover=await assertMediaImage(env,b.cover_media_id),fields=sanitizeFields(b.fields),settings=sanitizeFormSettings(b.settings);const r=await env.DB.prepare(`INSERT INTO forms(slug,name,description,kind,status,fields_json,settings_json,cover_media_id,opens_at,closes_at,capacity,created_by,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(slug,name,cleanText(b.description,5000),cleanText(b.kind||'general',80),FORM_STATUSES.has(b.status)?b.status:'draft',JSON.stringify(fields),JSON.stringify(settings),cover,b.opens_at||null,b.closes_at||null,b.capacity?Number(b.capacity):null,user.id,user.id,t,t).run();await audit(env,user.id,'form.create','form',r.meta.last_row_id,{slug,field_count:fields.length},request);return json({ok:true,id:r.meta.last_row_id},201);}
   }
   if(action==='form'&&p[2]){
     requireFeature(user,'forms',write);const id=Number(p[2]),old=await env.DB.prepare(`SELECT * FROM forms WHERE id=?`).bind(id).first();assert(old,404,'Không tìm thấy biểu mẫu.');
     if(request.method==='GET')return json({ok:true,item:{...old,fields:sanitizeFields(asJson(old.fields_json,[])),settings:sanitizeFormSettings(asJson(old.settings_json,{})),cover_url:old.cover_media_id?`/api/media/${old.cover_media_id}`:null}});
-    if(request.method==='PUT'){const b=await readJson(request);let cover=old.cover_media_id;if(Object.prototype.hasOwnProperty.call(b,'cover_media_id'))cover=await assertMediaImage(env,b.cover_media_id);const fields=sanitizeFields(b.fields??asJson(old.fields_json,[])),settings=sanitizeFormSettings(b.settings??asJson(old.settings_json,{}));await env.DB.prepare(`UPDATE forms SET slug=?,name=?,description=?,kind=?,status=?,fields_json=?,settings_json=?,cover_media_id=?,opens_at=?,closes_at=?,capacity=?,updated_by=?,updated_at=? WHERE id=?`).bind(safeSlug(b.slug||old.slug),cleanText(b.name??old.name,200),cleanText(b.description??old.description,5000),cleanText(b.kind??old.kind,80),FORM_STATUSES.has(b.status)?b.status:old.status,JSON.stringify(fields),JSON.stringify(settings),cover,b.opens_at??old.opens_at,b.closes_at??old.closes_at,b.capacity===null?null:(b.capacity??old.capacity),user.id,now(),id).run();await audit(env,user.id,'form.update','form',id,{field_count:fields.length},request);return json({ok:true});}
+    if(request.method==='PUT'){const b=await readJson(request);let cover=old.cover_media_id;if(Object.prototype.hasOwnProperty.call(b,'cover_media_id'))cover=await assertMediaImage(env,b.cover_media_id);const fields=sanitizeFields(b.fields??asJson(old.fields_json,[])),settings=sanitizeFormSettings(b.settings??asJson(old.settings_json,{})),opensAt=Object.prototype.hasOwnProperty.call(b,'opens_at')?b.opens_at:old.opens_at,closesAt=Object.prototype.hasOwnProperty.call(b,'closes_at')?b.closes_at:old.closes_at;validateFormWindow(opensAt||null,closesAt||null);await env.DB.prepare(`UPDATE forms SET slug=?,name=?,description=?,kind=?,status=?,fields_json=?,settings_json=?,cover_media_id=?,opens_at=?,closes_at=?,capacity=?,updated_by=?,updated_at=? WHERE id=?`).bind(safeSlug(b.slug||old.slug),cleanText(b.name??old.name,200),cleanText(b.description??old.description,5000),cleanText(b.kind??old.kind,80),FORM_STATUSES.has(b.status)?b.status:old.status,JSON.stringify(fields),JSON.stringify(settings),cover,opensAt||null,closesAt||null,b.capacity===null?null:(b.capacity??old.capacity),user.id,now(),id).run();await audit(env,user.id,'form.update','form',id,{field_count:fields.length},request);return json({ok:true});}
     if(request.method==='DELETE'){assert(ADMIN_ROLES.has(user.role),403,'Chỉ quản trị viên được xóa biểu mẫu.');const uploads=await env.DB.prepare(`SELECT r2_key FROM form_uploads WHERE form_id=?`).bind(id).all();for(const x of uploads.results||[]){try{await env.STORAGE.delete(x.r2_key)}catch{}}const c=await env.DB.prepare(`SELECT COUNT(*) c FROM form_submissions WHERE form_id=?`).bind(id).first();await env.DB.prepare(`DELETE FROM forms WHERE id=?`).bind(id).run();await audit(env,user.id,'form.delete','form',id,{deleted_submissions:Number(c.c||0),deleted_uploads:(uploads.results||[]).length},request);return json({ok:true,deleted_submissions:Number(c.c||0)});}
   }
 

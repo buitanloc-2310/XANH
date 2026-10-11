@@ -1,0 +1,352 @@
+TAP version 13
+# Subtest: site-wide appearance controls persist through existing general settings endpoint
+ok 1 - site-wide appearance controls persist through existing general settings endpoint
+  ---
+  duration_ms: 9.86598
+  type: 'test'
+  ...
+# Subtest: reference designs are implemented as responsive HTML/CSS components, not screenshot backgrounds
+ok 2 - reference designs are implemented as responsive HTML/CSS components, not screenshot backgrounds
+  ---
+  duration_ms: 8.344647
+  type: 'test'
+  ...
+# Subtest: action page has its own route and useful pathway rather than reusing the about page
+ok 3 - action page has its own route and useful pathway rather than reusing the about page
+  ---
+  duration_ms: 13.056104
+  type: 'test'
+  ...
+# Subtest: public API failures are not silently presented as empty lists and impact errors are labeled
+ok 4 - public API failures are not silently presented as empty lists and impact errors are labeled
+  ---
+  duration_ms: 3.918254
+  type: 'test'
+  ...
+# Subtest: CTT integration has a visible, role-limited Admin panel using existing API
+ok 5 - CTT integration has a visible, role-limited Admin panel using existing API
+  ---
+  duration_ms: 4.940296
+  type: 'test'
+  ...
+# Subtest: Admin fetch errors do not reflect raw backend errors and offer retry
+ok 6 - Admin fetch errors do not reflect raw backend errors and offer retry
+  ---
+  duration_ms: 2.620286
+  type: 'test'
+  ...
+# Subtest: final UI includes responsive action cards, keyboard focus and reduced-motion support
+ok 7 - final UI includes responsive action cards, keyboard focus and reduced-motion support
+  ---
+  duration_ms: 2.993674
+  type: 'test'
+  ...
+# Subtest: HTML sitemap is derived from actual navigation rather than an undefined variable
+ok 8 - HTML sitemap is derived from actual navigation rather than an undefined variable
+  ---
+  duration_ms: 4.197661
+  type: 'test'
+  ...
+# Subtest: default CMS submenu URLs match page slugs seeded by project migrations
+ok 9 - default CMS submenu URLs match page slugs seeded by project migrations
+  ---
+  duration_ms: 5.728541
+  type: 'test'
+  ...
+# Subtest: editorial refresh migration is non-destructive and guarded against overwriting CMS edits
+ok 10 - editorial refresh migration is non-destructive and guarded against overwriting CMS edits
+  ---
+  duration_ms: 5.048461
+  type: 'test'
+  ...
+# Subtest: public metadata describes the actual site purpose rather than a slogan-only description
+ok 11 - public metadata describes the actual site purpose rather than a slogan-only description
+  ---
+  duration_ms: 2.029229
+  type: 'test'
+  ...
+# Subtest: Admin image block editor validates CMS media IDs before building preview URLs
+ok 12 - Admin image block editor validates CMS media IDs before building preview URLs
+  ---
+  duration_ms: 6.044663
+  type: 'test'
+  ...
+# Subtest: Xanh signs and sends minimal submission metadata to CTT with durable outbox
+ok 13 - Xanh signs and sends minimal submission metadata to CTT with durable outbox
+  ---
+  duration_ms: 2.784708
+  type: 'test'
+  ...
+# Subtest: Xanh outbox migration is non-destructive and supports retry status
+ok 14 - Xanh outbox migration is non-destructive and supports retry status
+  ---
+  duration_ms: 0.955711
+  type: 'test'
+  ...
+# Subtest: Dấu ấn xanh has exactly the seven approved configurable metrics and keeps the rejected metric hidden
+ok 15 - Dấu ấn xanh has exactly the seven approved configurable metrics and keeps the rejected metric hidden
+  ---
+  duration_ms: 10.164037
+  type: 'test'
+  ...
+# Subtest: Admin Total can edit each card label, unit, icon, source, manual value, order and visibility
+ok 16 - Admin Total can edit each card label, unit, icon, source, manual value, order and visibility
+  ---
+  duration_ms: 4.215836
+  type: 'test'
+  ...
+# Subtest: Admin impact API validates and persistently upserts seven cards in D1 with safe values
+ok 17 - Admin impact API validates and persistently upserts seven cards in D1 with safe values
+  ---
+  duration_ms: 2.825495
+  type: 'test'
+  ...
+# Subtest: Public impact cards use configured API counters and keep units beside the animated value
+ok 18 - Public impact cards use configured API counters and keep units beside the animated value
+  ---
+  duration_ms: 5.638679
+  type: 'test'
+  ...
+# Subtest: Public impact view fills missing config rows with the seven approved labels but never fake values
+ok 19 - Public impact view fills missing config rows with the seven approved labels but never fake values
+  ---
+  duration_ms: 2.671876
+  type: 'test'
+  ...
+# Subtest: Dấu ấn xanh matches the seven-column reference on wide screens and responds at 100% zoom
+ok 20 - Dấu ấn xanh matches the seven-column reference on wide screens and responds at 100% zoom
+  ---
+  duration_ms: 3.120156
+  type: 'test'
+  ...
+# Subtest: Incomplete D1 configuration is completed to seven cards without overwriting saved values
+ok 21 - Incomplete D1 configuration is completed to seven cards without overwriting saved values
+  ---
+  duration_ms: 5.930488
+  type: 'test'
+  ...
+# Subtest: Admin impact editor fills missing API records locally and always builds seven editable cards
+ok 22 - Admin impact editor fills missing API records locally and always builds seven editable cards
+  ---
+  duration_ms: 2.481564
+  type: 'test'
+  ...
+# Subtest: Design System saves a scoped theme inside existing general settings and reads it back
+ok 23 - Design System saves a scoped theme inside existing general settings and reads it back
+  ---
+  duration_ms: 14.564058
+  type: 'test'
+  ...
+# Subtest: Page Builder supports reusable countdown blocks and requires a valid deadline before publishing
+ok 24 - Page Builder supports reusable countdown blocks and requires a valid deadline before publishing
+  ---
+  duration_ms: 6.507165
+  type: 'test'
+  ...
+# Subtest: Form deadline display is configurable and server endpoint keeps authoritative expiry guard
+ok 25 - Form deadline display is configurable and server endpoint keeps authoritative expiry guard
+  ---
+  duration_ms: 3.614989
+  type: 'test'
+  ...
+# Subtest: Admin updates preserve workspace scroll container and route only scrolls on deliberate public navigation
+ok 26 - Admin updates preserve workspace scroll container and route only scrolls on deliberate public navigation
+  ---
+  duration_ms: 8.287435
+  type: 'test'
+  ...
+# Subtest: datetime-local values are formatted in their configured time zone rather than sliced from UTC ISO strings
+ok 27 - datetime-local values are formatted in their configured time zone rather than sliced from UTC ISO strings
+  ---
+  duration_ms: 10.68022
+  type: 'test'
+  ...
+# Subtest: Expired registration page initializes expiry state before rendering and does not show a live zero counter
+ok 28 - Expired registration page initializes expiry state before rendering and does not show a live zero counter
+  ---
+  duration_ms: 1.963474
+  type: 'test'
+  ...
+# Subtest: Form Builder validates the open/close window on both client and server
+ok 29 - Form Builder validates the open/close window on both client and server
+  ---
+  duration_ms: 9.164865
+  type: 'test'
+  ...
+# Subtest: Configured local deadlines convert deterministically and reject impossible calendar dates
+ok 30 - Configured local deadlines convert deterministically and reject impossible calendar dates
+  ---
+  duration_ms: 29.296212
+  type: 'test'
+  ...
+# Subtest: Scoped Design System persists the selected page and does not bypass the existing settings merge
+ok 31 - Scoped Design System persists the selected page and does not bypass the existing settings merge
+  ---
+  duration_ms: 4.602827
+  type: 'test'
+  ...
+# Subtest: Design System can independently choose heading typography and persist a Media-controlled favicon
+ok 32 - Design System can independently choose heading typography and persist a Media-controlled favicon
+  ---
+  duration_ms: 12.043892
+  type: 'test'
+  ...
+# Subtest: A scheduled open form exposes its upcoming start without allowing server-side submissions early
+ok 33 - A scheduled open form exposes its upcoming start without allowing server-side submissions early
+  ---
+  duration_ms: 7.462666
+  type: 'test'
+  ...
+# Subtest: Page Builder has real drag-and-drop ordering as well as keyboard-accessible up/down controls
+ok 34 - Page Builder has real drag-and-drop ordering as well as keyboard-accessible up/down controls
+  ---
+  duration_ms: 4.060239
+  type: 'test'
+  ...
+# Subtest: migration 0006 adds verified waste/beneficiary data and four counter settings
+ok 35 - migration 0006 adds verified waste/beneficiary data and four counter settings
+  ---
+  duration_ms: 9.723227
+  type: 'test'
+  ...
+# Subtest: Navigation Manager and homepage preview are wired to admin endpoints
+ok 36 - Navigation Manager and homepage preview are wired to admin endpoints
+  ---
+  duration_ms: 4.574537
+  type: 'test'
+  ...
+# Subtest: public counters show a placeholder without verified data and can be timed
+ok 37 - public counters show a placeholder without verified data and can be timed
+  ---
+  duration_ms: 5.8887
+  type: 'test'
+  ...
+# Subtest: newsletter has a backend unsubscribe route and email link
+ok 38 - newsletter has a backend unsubscribe route and email link
+  ---
+  duration_ms: 2.046052
+  type: 'test'
+  ...
+# Subtest: PBKDF2 iteration count is hard-pinned to 100000
+ok 39 - PBKDF2 iteration count is hard-pinned to 100000
+  ---
+  duration_ms: 0.967584
+  type: 'test'
+  ...
+# Subtest: password hash stores exactly 100000 rounds and verifies
+ok 40 - password hash stores exactly 100000 rounds and verifies
+  ---
+  duration_ms: 108.297357
+  type: 'test'
+  ...
+# Subtest: hashes above the supported 100000-round cost are rejected
+ok 41 - hashes above the supported 100000-round cost are rejected
+  ---
+  duration_ms: 34.606236
+  type: 'test'
+  ...
+# Subtest: Cloudflare bindings are production values
+ok 42 - Cloudflare bindings are production values
+  ---
+  duration_ms: 11.168714
+  type: 'test'
+  ...
+# Subtest: official supplied logo is bundled in production assets
+ok 43 - official supplied logo is bundled in production assets
+  ---
+  duration_ms: 1.126987
+  type: 'test'
+  ...
+# Subtest: safeHref accepts supported navigation targets and rejects unsafe schemes
+ok 44 - safeHref accepts supported navigation targets and rejects unsafe schemes
+  ---
+  duration_ms: 1.11645
+  type: 'test'
+  ...
+# Subtest: isInternalHref only marks safe same-site paths for client navigation
+ok 45 - isInternalHref only marks safe same-site paths for client navigation
+  ---
+  duration_ms: 0.245337
+  type: 'test'
+  ...
+# Subtest: safeImageSrc permits known local media and approved HTTPS hero provider only
+ok 46 - safeImageSrc permits known local media and approved HTTPS hero provider only
+  ---
+  duration_ms: 0.302461
+  type: 'test'
+  ...
+# Subtest: public site uses pathname routes instead of hash-only navigation
+ok 47 - public site uses pathname routes instead of hash-only navigation
+  ---
+  duration_ms: 6.262386
+  type: 'test'
+  ...
+# Subtest: people editor is upload-first and stores photo_media_id
+ok 48 - people editor is upload-first and stores photo_media_id
+  ---
+  duration_ms: 3.343425
+  type: 'test'
+  ...
+# Subtest: form builder is real UI and private uploads exist
+ok 49 - form builder is real UI and private uploads exist
+  ---
+  duration_ms: 4.987813
+  type: 'test'
+  ...
+# Subtest: Resend production variable names are used without MAIL_FROM fallback
+ok 50 - Resend production variable names are used without MAIL_FROM fallback
+  ---
+  duration_ms: 1.630711
+  type: 'test'
+  ...
+# Subtest: dynamic sitemap function includes indexable people and public content
+ok 51 - dynamic sitemap function includes indexable people and public content
+  ---
+  duration_ms: 1.229755
+  type: 'test'
+  ...
+# Subtest: Xanh lookup, certificate handoff, seeded Hanoi volunteer form and destructive admin deletes are wired
+ok 52 - Xanh lookup, certificate handoff, seeded Hanoi volunteer form and destructive admin deletes are wired
+  ---
+  duration_ms: 5.882165
+  type: 'test'
+  ...
+# Subtest: public form is rendered only from Form Builder fields
+ok 53 - public form is rendered only from Form Builder fields
+  ---
+  duration_ms: 4.199996
+  type: 'test'
+  ...
+# Subtest: WordPress Tổng is an in-place CMS workspace over the existing CMS APIs
+ok 54 - WordPress Tổng is an in-place CMS workspace over the existing CMS APIs
+  ---
+  duration_ms: 15.557685
+  type: 'test'
+  ...
+# Subtest: WordPress workspace can edit pages, all content types, menus, media, appearance, impact and forms without losing its current section
+ok 55 - WordPress workspace can edit pages, all content types, menus, media, appearance, impact and forms without losing its current section
+  ---
+  duration_ms: 3.387748
+  type: 'test'
+  ...
+# Subtest: WordPress sections are scoped to current roles and do not modify backend RBAC
+ok 56 - WordPress sections are scoped to current roles and do not modify backend RBAC
+  ---
+  duration_ms: 3.876246
+  type: 'test'
+  ...
+# Subtest: content preview stays inside the current editor and does not replace the edit modal
+ok 57 - content preview stays inside the current editor and does not replace the edit modal
+  ---
+  duration_ms: 1.891181
+  type: 'test'
+  ...
+1..57
+# tests 57
+# suites 0
+# pass 57
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 479.292446

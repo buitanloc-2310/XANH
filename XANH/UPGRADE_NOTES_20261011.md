@@ -24,3 +24,10 @@
 - `node --check public/app.js`, `public/ui-safety.js`, `functions/api/[[path]].js`, `functions/sitemap.xml.js`: đạt.
 - Chạy 8 migration trên SQLite tạm: đạt; đã thử xác nhận nội dung CMS được quản trị sửa trước đó không bị ghi đè.
 - Kiểm thử trình duyệt Chromium bị chặn bởi môi trường chạy; cần kiểm tra lại trên trình duyệt/môi trường được phép.
+
+## Bổ sung WordPress Tổng (CMS hub)
+
+- Thêm mục `WordPress Tổng · CMS` cho `root_admin` và `administrator` trong Admin.
+- Đây là màn hình điều hướng tập trung đến các module CMS đang dùng: Pages/Page Builder, bài viết, menu/footer, Media Library, cài đặt giao diện/SEO chung và Dấu ấn xanh.
+- Không cài WordPress riêng, không tạo nguồn dữ liệu thứ hai; các thao tác chỉnh sửa tiếp tục đi qua API/backend hiện hành.
+- Đã thêm kiểm thử tự động cho quyền hiển thị và các liên kết module.

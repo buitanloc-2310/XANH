@@ -69,7 +69,7 @@ test('Dấu ấn xanh matches the seven-column reference on wide screens and res
   assert.match(css,/\.impact\{display:block!important/);
   assert.match(css,/\.top \.header-cta\{[^}]*white-space:nowrap/);
   assert.match(css,/\.hero-scenic h1\{font-size:clamp\(calc\(40px/);
-  assert.match(css,/@media\(max-width:1499px\) and \(min-width:1100px\)\{\.metrics\{grid-template-columns:repeat\(7/);
+  assert.match(css,/@media\(max-width:1499px\) and \(min-width:1100px\)\{\.metrics\{grid-template-columns:repeat\(4/);
   assert.match(css,/@media\(max-width:760px\)\{\.impact\{/);
   assert.ok((await stat(resolve(root,'public/assets/dau-an-xanh-landscape.webp'))).size>10000);
 });

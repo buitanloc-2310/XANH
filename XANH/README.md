@@ -107,6 +107,6 @@ npm run check
 
 Sau deploy cần smoke-test trên Cloudflare thật các phần phụ thuộc binding/secrets: R2 upload, D1 write/read, Resend, route deep-link và First-time Setup.
 
-### Rebuild upgrade (migration 0006)
+### Rebuild upgrade (migrations 0006–0009)
 
-`migrations/0006_navigation_impact_content.sql` bổ sung Navigation Manager, bốn cấu hình Impact (bao gồm tấn rác đã thu gom), nội dung trang/menu mẫu và dữ liệu cho bộ đếm. Thực hiện backup D1 trước khi nâng cấp production; xem `DEPLOYMENT_STEPS.md` để áp dụng migration bằng Wrangler hoặc SQL Console (chỉ chọn một phương thức).
+Các migration `0006`–`0009` bổ sung điều hướng/CMS, outbox tích hợp CTT, làm mới nội dung mặc định có điều kiện để không ghi đè nội dung Admin đã chỉnh, và bảy cấu hình Dấu ấn xanh. Trước khi triển khai production, sao lưu D1 và đối chiếu migration ledger/schema. Hướng dẫn an toàn nằm trong `DEPLOYMENT_STEPS.md`; không chạy lại migration đã áp dụng và không thực hiện song song SQL Console với Wrangler cho cùng migration. Xem `FINAL_ACCEPTANCE.md` và `FINAL_AUDIT_20261011.md` để phân biệt test local với các bước phải xác minh trên production.

@@ -1,55 +1,64 @@
 # FINAL ACCEPTANCE — Xanh Sky First
 
-Ngày rà source: 2026-10-05.
+Ngày rà soát mã nguồn: 2026-10-11.
 
-Quy ước:
-- **PASS**: có thể kiểm tra trực tiếp trong source/local runtime tại thời điểm đóng gói.
-- **NOT TESTABLE LOCALLY**: phụ thuộc Cloudflare production binding, secret, domain hoặc trình duyệt production nên không tự tuyên bố PASS.
-- **FAIL**: chưa đạt và không được che giấu.
+## Kết luận nghiệm thu
 
-## 25 tiêu chí nghiệm thu
+**Kết quả hiện tại: PASS ở kiểm tra mã nguồn cục bộ; CHƯA ĐỦ BẰNG CHỨNG để xác nhận production đạt 100%.** Gói này chưa được triển khai lên `xanh.skyfirst.io.vn`; không có thao tác nào trong lần rà soát này chạy migration hoặc sửa dữ liệu D1 production.
 
-| # | Tiêu chí | Kết quả | Kiểm tra |
+Quy ước: **PASS local** nghĩa là có test/kiểm tra source chạy được tại gói mã nguồn; **CHỜ PRODUCTION** là phải kiểm tra trong tài khoản Cloudflare, trên trình duyệt và dữ liệu thật; **CHƯA ĐẠT** là lỗi source đã biết, không che giấu.
+
+## Ma trận nghiệm thu
+
+| # | Tiêu chí | Kết quả | Bằng chứng/phần còn thiếu |
 |---|---|---|---|
-| 1 | Build/source JavaScript không syntax error | PASS | `node --check` toàn bộ JS/MJS và test suite |
-| 2 | Không syntax error | PASS | `node --check` |
-| 3 | Không còn mức PBKDF2 cũ vượt 100000; PBKDF2 = 100000 | PASS | test crypto + verify script |
-| 4 | Route public refresh/deep-link | NOT TESTABLE LOCALLY | `_redirects` đã cấu hình SPA fallback; cần smoke test trên Pages domain |
-| 5 | Menu/Footer không dùng hash route chính | PASS | route pathname thật trong `public/app.js` |
-| 6 | 5 trang pháp lý/Sitemap có nội dung thật | PASS | migration `0003` seed 5 trang CMS; `/sitemap` có UI riêng |
-| 7 | Tạo người + upload ảnh + lưu photo_media_id + public profile | NOT TESTABLE LOCALLY | UI/API/R2 flow đã nối đủ; cần D1+R2 production để test end-to-end |
-| 8 | Media upload thực sự đi R2 | NOT TESTABLE LOCALLY | API gọi `env.STORAGE.put`; cần binding production để xác minh |
-| 9 | Form Builder tạo form mới | NOT TESTABLE LOCALLY | UI + API + schema có đủ; cần browser+D1 smoke test |
-| 10 | Form public submit ghi D1 | NOT TESTABLE LOCALLY | API ghi `form_submissions`; cần D1 production |
-| 11 | Hồ sơ xuất hiện trong Admin | NOT TESTABLE LOCALLY | Admin đọc `/api/admin/submissions`; cần D1 production |
-| 12 | RBAC kiểm tra backend | PASS | feature/type permission enforced trong API, không chỉ ẩn menu |
-| 13 | Content Editor không quản trị user | PASS | `/api/admin/users` chỉ Root Admin |
-| 14 | Viewer không sửa dữ liệu | PASS | Viewer chỉ có dashboard/audit GET |
-| 15 | Draft/Preview/Publish content | NOT TESTABLE LOCALLY | UI/editor/API đã có; cần browser smoke test |
-| 16 | Sitemap/robots | PASS | `functions/sitemap.xml.js` động + `public/robots.txt` |
-| 17 | SEO metadata | PASS | client cập nhật title/description/canonical/OG/robots; sitemap động |
-| 18 | Mobile responsive | NOT TESTABLE LOCALLY | CSS breakpoints có; cần visual QA trên thiết bị/browser |
-| 19 | Admin không hard-reload khi chuyển module/lưu | PASS | History API + fetch; document không reload cho thao tác chính |
-| 20 | Không có `href="#"`/Coming soon trong luồng production chính | PASS | verify/search source |
-| 21 | Không seed số liệu/người/dự án/thành tích giả | PASS | chỉ seed nội dung giới thiệu và chính sách; dữ liệu thực dùng empty state |
-| 22 | Resend dùng `EMAIL_FROM` + `EMAIL_REPLY_TO` | PASS | backend đọc đúng tên biến production |
-| 23 | Setup chỉ chạy khi chưa có Root Admin | PASS | backend kiểm tra `setupStatus()` trước insert |
-| 24 | Setup không tạo Root Admin thứ hai | PASS | trả 409 khi đã có Root Admin |
-| 25 | Password PBKDF2-SHA256/100000 | PASS | unit test hash/verify |
+| 1 | JavaScript/MJS không lỗi cú pháp | PASS local | `node --check` toàn bộ tệp JS/MJS |
+| 2 | Bộ kiểm thử tự động | PASS local | `npm test`: 41/41 test đạt |
+| 3 | Kiểm tra cấu trúc production | PASS local | `node scripts/verify-production.mjs` |
+| 4 | Bảo toàn backend/API/D1/R2/auth/RBAC hiện có | PASS theo source | Không viết lại backend; endpoint và cơ chế quyền đang có được tái sử dụng; cần kiểm tra lại trên deployment |
+| 5 | WordPress thực sự hay CMS tự xây dựng | PASS theo source | Đây là Cloudflare Pages Functions + D1/R2 và CMS tự xây dựng, không phải một cài đặt WordPress độc lập; WordPress Tổng được dùng làm trung tâm đi đến module CMS hiện có |
+| 6 | WordPress Tổng không nuốt lỗi API | PASS local | `Promise.allSettled`; phân hệ lỗi có cảnh báo rõ và bộ đếm không giả là 0 |
+| 7 | Admin Tổng/WordPress Tổng giới hạn vai trò | PASS theo source | Điều hướng và endpoint áp dụng RBAC; phải kiểm tra đăng nhập theo vai trò thật sau deploy |
+| 8 | 7 thẻ Dấu ấn xanh, không công bố số giả | PASS theo source/test | 7 cấu hình metric; dữ liệu thiếu hiển thị dấu chưa có dữ liệu; thẻ “Cộng đồng hưởng lợi” bị ẩn, dữ liệu lịch sử không bị xóa |
+| 9 | Admin cấu hình nhãn, đơn vị, biểu tượng, nguồn, giá trị thủ công, thứ tự, hiển thị | PASS local/source | API cập nhật cấu hình hiện hữu và D1; phải smoke-test PUT → GET → public trong production |
+| 10 | Quy đổi rác sang tấn | PASS theo source | API dùng trường dữ liệu đã được lưu theo tấn; xác minh nguồn gốc dữ liệu thật vẫn cần đối chiếu dữ liệu D1 |
+| 11 | Hiệu ứng đếm và đơn vị đi cùng số | PASS theo source/test | IntersectionObserver, dừng tại đích, placeholder khi thiếu dữ liệu, unit no-wrap; cần xem trực quan trình duyệt thật |
+| 12 | Responsive Dấu ấn xanh | PASS CSS/test cấu trúc | 7 cột ở màn hình rộng; 4 cột ở desktop hẹp/trung bình; 2 cột tablet/mobile và 1 cột màn hình rất hẹp |
+| 13 | Menu/submenu/footer mặc định và route CMS | PASS local/test | Test các slug mặc định và cấu hình điều hướng; vẫn cần crawl URL thật sau deploy |
+| 14 | Nội dung CMS, Preview, Draft/Publish, SEO | PASS theo source | UI/API có sẵn; luồng trình duyệt lưu → tải lại → public chưa chạy trên production |
+| 15 | Giao diện/SEO chung, Media Library, biểu mẫu, nhật ký | PASS theo source | Tích hợp với API hiện hữu; quyền R2/D1 và luồng thực phải smoke-test |
+| 16 | Zoom 100% và thiết bị thật | CHỜ PRODUCTION | Kiểm tra CSS và breakpoint tự động không thay thế screenshot/visual QA trên Chrome ở nhiều viewport và zoom 100% |
+| 17 | Lưu Admin → dữ liệu bền vững → website công khai | CHỜ PRODUCTION | Cần tài khoản Admin và dữ liệu Cloudflare thật để cập nhật thử an toàn, tải lại Admin và trang công khai |
+| 18 | Trạng thái D1/migration production | CHỜ PRODUCTION | Chưa đọc được migration ledger hoặc schema D1 từ tài khoản production; sao lưu trước khi apply |
+| 19 | Upload/đọc lại media R2 | CHỜ PRODUCTION | Cần binding/permission R2 production |
+| 20 | Login, RBAC, email và tích hợp ngoài | CHỜ PRODUCTION | Cần test tài khoản vai trò, Resend/CTT và secrets thật sau deploy |
 
-## Bổ sung production-hardening đã làm
+## Đã chỉnh trong lần audit này
 
-- Migration `0003_production_hardening.sql` áp dụng thành công trên SQLite local sau `0001` và `0002`.
-- Content revisions và page revisions.
-- Private form uploads lưu R2 nhưng không expose qua `/api/media/:id`; chỉ admin có quyền hồ sơ mới tải được.
-- Submission timeline + status update + email tùy chọn.
-- Media picker dùng chung cho ảnh người, cover form và cover/content blocks.
-- Dynamic XML sitemap lấy content/profile/form/page public thật.
-- Service worker cung cấp shell fallback khi mạng lỗi; admin/API không cache.
-- 403/404/500 UI states.
-- `prefers-reduced-motion`, focus-visible, keyboard command palette (`Ctrl/Cmd + K`).
-- Reset-password dùng pathname thật `/reset-password?token=...`, không hash route.
+- WordPress Tổng không còn âm thầm biến lỗi tải API thành số 0 hoặc gạch ngang khó phân biệt; lỗi được nêu rõ và thống kê phân biệt trang/bài xuất bản cùng bản nháp.
+- Trung tâm CMS có liên kết đến các module hiện hữu gồm trang, bài viết, menu/footer, media, giao diện, Dấu ấn xanh, biểu mẫu và nhật ký. Không tạo CMS/WordPress hay database thứ hai.
+- Responsive Dấu ấn xanh dùng 4 cột trong dải desktop hẹp/trung bình để tránh ép bảy thẻ vào vùng quá chật; màn hình rộng vẫn dùng 7 cột, màn hình nhỏ chuyển lưới.
+- Tăng phiên bản service-worker cache lên `xanh-shell-v8`, đồng thời đổi phiên bản query của CSS/JS sang `20261011-3` để yêu cầu trình duyệt lấy tài nguyên mới sau deploy.
+- Bổ sung kiểm thử hồi quy cho thông báo lỗi WordPress Tổng.
+- Hướng dẫn triển khai được sửa để yêu cầu backup D1, kiểm tra migration ledger và chỉ áp dụng migration theo trạng thái thật; không được chạy lặp SQL thủ công và Wrangler trên cùng migration.
 
-## Những phần không được tuyên bố là đã xác minh production
+## Kiểm tra local có thể chạy lại
 
-Không thể từ ZIP/local source tự xác minh: secret Cloudflare, quyền R2 thật, Resend domain verification, custom domain, D1 production state, cache/CDN và hành vi browser trên mọi thiết bị. Sau deploy phải smoke-test các luồng đó trước khi coi là go-live hoàn toàn.
+```bash
+npm test
+npm run check
+# Syntax check toàn bộ JS/MJS: chạy vòng lặp shell/Node phù hợp môi trường
+```
+
+Các migration `0001`–`0009` đã được kiểm tra trên SQLite local sạch trong lần audit trước; việc đó **không** chứng minh schema, dữ liệu hoặc migration ledger của D1 production đang giống hệt. Không có migration production nào được chạy trong lần audit này.
+
+## Điều kiện bắt buộc trước khi đánh dấu hoàn thành 100%
+
+1. Sao lưu D1 production và xác minh migration ledger trước khi chạy migration; nếu trạng thái không khớp thì dừng để đối chiếu, không áp dụng mù.
+2. Deploy lên Cloudflare Pages đúng project/branch và xác minh binding `DB`, `STORAGE` cùng secrets/variables.
+3. Đăng nhập tài khoản Admin được ủy quyền; thay đổi một trường kiểm thử an toàn trong nội dung hoặc Dấu ấn xanh; lưu, tải lại Admin, rồi xác nhận giá trị mới xuất hiện ở API và trang công khai. Khôi phục dữ liệu thử sau kiểm tra nếu cần.
+4. Xác minh các giá trị D1 với nguồn nghiệp vụ; không nhập số liệu minh họa để thay dữ liệu thật.
+5. Chụp/kiểm tra trang chủ, trang con, menu, footer và Dấu ấn xanh ở Chrome zoom 100% với viewport desktop rộng, desktop hẹp, tablet, điện thoại; không tràn ngang/chồng lấn.
+6. Smoke-test đăng nhập và ít nhất các vai trò bị giới hạn, upload/đọc lại media R2, biểu mẫu, SEO/sitemap/deep-link và tích hợp ngoài đang bật.
+
+**Không được coi ZIP, CSS, migrations local hoặc unit tests là bằng chứng website production đã được cập nhật.**

@@ -10,10 +10,10 @@ test('site-wide appearance controls persist through existing general settings en
  assert.ok(app.includes("key:'general',value"));
  assert.ok(api.includes("['general','footer','media','impact','security','cms'].includes(key)"));
 });
-test('reference visuals are included as optimized assets and used by real page components',async()=>{
+test('reference designs are implemented as responsive HTML/CSS components, not screenshot backgrounds',async()=>{
  const css=await read('public/styles.css');
- for(const f of ['projects-visual.webp','activities-visual.webp','impact-visual.webp','action-visual.webp','footer-visual.webp']){
-  await stat(resolve(root,'public/assets/reference',f)); assert.ok(css.includes(f),`asset not referenced in CSS: ${f}`);
- }
- const app=await read('public/app.js');assert.ok(app.includes('visual-page-hero visual-${type}'));
+ for(const token of ['.dynamic-feature','.project-stack','.calendar-sheet','.visual-page-hero::after','.impact{background-image:var(--impact-visual,none)','.footer-cta']) assert.ok(css.includes(token),`missing CSS component: ${token}`);
+ const app=await read('public/app.js');
+ for(const token of ['project-visual','calendar-visual','dynamic-feature-list','visual-page-hero visual-${type}']) assert.ok(app.includes(token),`missing page markup: ${token}`);
+ assert.ok(!css.includes('/assets/reference/'),'should not rely on reference screenshot assets');
 });

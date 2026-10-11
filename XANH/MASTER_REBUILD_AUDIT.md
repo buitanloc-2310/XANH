@@ -1,29 +1,21 @@
-# Xanh Sky First — cập nhật giao diện & quản trị
+# Báo cáo chỉnh sửa giao diện theo ảnh tham chiếu
 
-## Nguồn
-- ZIP gốc: `XANH-Sky-First-REDESIGNED.zip`
-- Phạm vi: cập nhật giao diện công khai, công cụ chỉnh giao diện, tài nguyên hình ảnh và kiểm thử.
-- Không chỉnh sửa Cổng Thông tin số Sky First.
-- Không áp dụng migration production và không thay đổi schema/bảng dữ liệu.
-
-## Thay đổi
-- Bổ sung các ảnh tham chiếu do người dùng cung cấp vào `public/assets/reference/` dưới định dạng WebP tối ưu.
-- Tạo các ảnh cắt dùng riêng cho khu vực chương trình/dự án, hoạt động, dấu ấn xanh, kêu gọi hành động và chân trang; tránh dùng nguyên ảnh chụp giao diện làm nền văn bản.
-- Áp dụng hình ảnh cho trang danh sách dự án/hoạt động, khối impact, CTA và chân trang.
-- Bổ sung `applySiteTheme()` để đọc cấu hình giao diện từ nhóm cài đặt `general` hiện có, có giới hạn màu, cỡ chữ, bo góc, chiều rộng nội dung, phông chữ và đường dẫn ảnh.
-- Bổ sung bảng điều khiển trong **Admin → Cài đặt & giao diện** để đổi màu chủ đạo, màu chữ, phông chữ, cỡ chữ cơ sở, tỷ lệ tiêu đề, bo góc, chiều rộng nội dung, ảnh các khu vực và nội dung CTA/chân trang.
-- Dùng API cài đặt hiện có (`/api/admin/settings`) và cơ sở dữ liệu JSON settings hiện tại; không cần migration mới.
-- Các trang, nội dung, dự án, hoạt động, tin tức, biểu mẫu và menu tiếp tục được quản trị qua các module CMS hiện có.
+## Phạm vi của bản này
+- Tái dựng bố cục giao diện bằng HTML/CSS responsive thay vì chèn ảnh tham chiếu làm nền hoặc biến ảnh thành trang web.
+- Các khu vực dự án và hoạt động có cấu trúc nội dung thật; dữ liệu bài viết tiếp tục lấy từ API/CMS.
+- Minh họa dự án dạng khối, cây và lịch hoạt động được dựng bằng CSS.
+- Dấu ấn xanh, CTA và chân trang dùng nền gradient/họa tiết CSS.
+- Không đưa ảnh người do AI tạo vào giao diện.
+- Không đóng gói các ảnh tham chiếu làm tài nguyên website; ảnh thật tùy chọn có thể được quản trị viên cung cấp qua Media Library.
+- Giữ API, backend, xác thực, phân quyền và schema/migrations hiện có; không tạo migration mới.
 
 ## Kiểm tra đã chạy
-- `node --check public/app.js`: đạt.
-- `npm test`: 18/18 bài kiểm thử đạt, gồm hai kiểm thử bổ sung cho quản trị giao diện và ảnh tham chiếu.
-- `npm run check`: đạt; công cụ xác minh source production quét 45 tệp.
-- Các ảnh tham chiếu được đóng gói trong ZIP.
+- `npm test`: 18/18 bài kiểm thử đạt.
+- `npm run check`: production verification đạt, 37 tệp được quét.
+- Kiểm tra cú pháp JavaScript: đạt.
+- Kiểm tra ZIP: thực hiện sau khi đóng gói.
 
 ## Giới hạn chưa xác minh
-- Chưa chạy trình duyệt end-to-end hoặc kiểm tra trên Cloudflare production.
-- Chưa xác minh tài khoản/quyền quản trị trên môi trường đang triển khai.
-- Chưa kiểm tra thay đổi màu và ảnh sau khi ghi vào D1 production.
-- Ảnh có sẵn là ảnh tham chiếu do người dùng cung cấp; admin có thể dùng đường dẫn nội bộ `/assets/...` hoặc `/api/media/{id}` để thay ảnh.
-- Admin quản trị được các nội dung/cấu hình mà CMS hỗ trợ; không thể thay đổi tùy ý mã nguồn thực thi, hợp đồng API hoặc nghiệp vụ từ bảng giao diện cài đặt.
+- Chưa triển khai lên Cloudflare production.
+- Chưa xác minh kết nối D1/R2 production hoặc chạy browser end-to-end trên các kích thước màn hình thực tế.
+- Chưa áp dụng thay đổi nào lên cơ sở dữ liệu production.

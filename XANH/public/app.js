@@ -145,7 +145,23 @@ async function renderHomeBlock(b,impact){
   if(b.type==='dynamic')return await dynamicSection(b.source,b.kicker,b.title);
   if(b.type==='impact'){
     if(impact.loadError)return `<section class="impact"><div class="impact-intro"><span class="eyebrow">${esc(b.kicker||'DẤU ẤN XANH')}</span><h2>${esc(b.title||'Mỗi con số đại diện cho một hành động đã thực sự diễn ra.')}</h2><p class="impact-lead">${esc(b.body||'Chỉ hiển thị số liệu có nguồn và phương pháp ghi nhận rõ ràng.')}</p><p class="inline-status error">Chưa thể tải số liệu lúc này. Các số liệu sẽ không được hiển thị khi chưa thể xác minh nguồn dữ liệu.</p></div></section>`;
-    const counters=(Array.isArray(impact.counters)?impact.counters:[]).filter(c=>c.enabled===true||Number(c.enabled)===1).sort((a,b)=>Number(a.sort_order||0)-Number(b.sort_order||0));
+    const approvedMetrics=[
+      {metric_key:'participants',label:'Tình nguyện viên tham gia',unit:'người',icon:'users',sort_order:1},
+      {metric_key:'completed_activities',label:'Hoạt động môi trường',unit:'hoạt động',icon:'sprout',sort_order:2},
+      {metric_key:'waste_tons',label:'Rác thải thu gom',unit:'tấn',icon:'recycle',sort_order:3},
+      {metric_key:'completed_programs',label:'Chương trình đã triển khai',unit:'chương trình',icon:'clipboard-check',sort_order:4},
+      {metric_key:'education_sessions',label:'Hoạt động giáo dục môi trường',unit:'buổi',icon:'book-open',sort_order:5},
+      {metric_key:'green_points',label:'Điểm xanh được kết nối',unit:'điểm',icon:'map-pin',sort_order:6},
+      {metric_key:'partner_units',label:'Đơn vị đồng hành',unit:'đơn vị',icon:'handshake',sort_order:7}
+    ];
+    const rawCounters=Array.isArray(impact.counters)?impact.counters:[];
+    // Gracefully fill missing configuration rows while a deployment/migration is pending.
+    // Values remain null; this fallback never invents public statistics.
+    const mergedCounters=approvedMetrics.map(base=>{
+      const saved=rawCounters.find(c=>c.metric_key===base.metric_key);
+      return saved?{...base,...saved,unit:saved.unit===undefined||saved.unit===null?base.unit:saved.unit,icon:saved.icon||base.icon,label:saved.label||base.label,enabled:saved.enabled===undefined?true:saved.enabled,value:saved.value===undefined?null:saved.value}:{...base,enabled:true,value:null,description:'',decimal_places:0,duration_ms:1800,delay_ms:0};
+    });
+    const counters=mergedCounters.filter(c=>c.enabled===true||Number(c.enabled)===1).sort((a,b)=>Number(a.sort_order||0)-Number(b.sort_order||0));
     const metricCards=counters.map((c,i)=>{
       const hasValue=c.value!==null&&c.value!==undefined&&Number.isFinite(Number(c.value));
       const decimals=Math.max(0,Math.min(3,Number(c.decimal_places||0)));

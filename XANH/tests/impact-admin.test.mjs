@@ -73,3 +73,30 @@ test('Dấu ấn xanh matches the seven-column reference on wide screens and res
   assert.match(css,/@media\(max-width:760px\)\{\.impact\{/);
   assert.ok((await stat(resolve(root,'public/assets/dau-an-xanh-landscape.webp'))).size>10000);
 });
+
+
+test('Incomplete D1 configuration is completed to seven cards without overwriting saved values',async()=>{
+  const { completeImpactConfigRows } = await import('../functions/_lib/impact-config.js');
+  const result=completeImpactConfigRows([
+    {metric_key:'participants',label:'Tên đã được Admin đổi',unit:'người',icon:'users',data_source:'manual',manual_value:12,enabled:1,sort_order:1},
+    {metric_key:'completed_activities',label:'Hoạt động môi trường',unit:'hoạt động',icon:'sprout',data_source:'d1',manual_value:null,enabled:1,sort_order:2},
+    {metric_key:'waste_tons',label:'Rác thải thu gom',unit:'tấn',icon:'recycle',data_source:'d1',manual_value:null,enabled:1,sort_order:3},
+  ]);
+  assert.equal(result.length,7,'must never show only the rows that happen to exist in D1');
+  assert.deepEqual(result.map(x=>x.metric_key),['participants','completed_activities','waste_tons','completed_programs','education_sessions','green_points','partner_units']);
+  assert.equal(result[0].label,'Tên đã được Admin đổi','must preserve existing Admin edits');
+  assert.equal(result[0].manual_value,12,'must preserve saved manual data');
+  assert.equal(result[3].label,'Chương trình đã triển khai');
+  assert.equal(result[3].manual_value,null,'must not invent statistics for missing metrics');
+  assert.equal(new Set(result.map(x=>x.sort_order)).size,7,'defaults must have unique display order');
+});
+
+test('Admin impact editor fills missing API records locally and always builds seven editable cards',async()=>{
+  const app=await read('public/app.js');
+  const editor=app.match(/async function impactCounterEditor\(\)[\s\S]*?\n}\nasync function impactAdmin/);
+  assert.ok(editor,'impact counter editor exists');
+  assert.match(editor[0],/const metricDefaults=\[/);
+  assert.match(editor[0],/storedByKey=new Map\(stored\.map\(c=>\[c\.metric_key,c\]\)\)/);
+  assert.match(editor[0],/const rows=metricDefaults\.map\(base=>/);
+  assert.match(editor[0],/if\(items\.length!==7\)/);
+});

@@ -2,6 +2,7 @@ import { json, readJson, HttpError, assert, errorResponse, safeSlug, cleanText, 
 import { hashPassword, verifyPassword, PBKDF2_ITERATIONS, randomToken, sha256Hex } from '../_lib/crypto.js';
 import { currentUser, requireUser, createSession, sessionCookie, clearSessionCookie, destroySession, audit } from '../_lib/auth.js';
 import { validateUpload, mediaKey } from '../_lib/media.js';
+import { completeImpactConfigRows } from '../_lib/impact-config.js';
 
 const CONTENT_TYPES = new Set(['article','project','activity','opportunity','resource','initiative']);
 const PUBLIC_STATUSES = new Set(['published','open','completed']);
@@ -12,6 +13,7 @@ const ADMIN_ROLES = new Set(['root_admin','administrator']);
 const IMPACT_DISPLAY_KEYS = ['participants','completed_activities','waste_tons','completed_programs','education_sessions','green_points','partner_units'];
 const IMPACT_ICON_KEYS = new Set(['users','sprout','recycle','clipboard-check','book-open','map-pin','handshake']);
 const IMPACT_D1_KEYS = new Set(['completed_activities','waste_tons','completed_programs','education_sessions']);
+
 
 function routeParts(request) {
   const u = new URL(request.url);
@@ -332,7 +334,7 @@ async function handlePublic(env, request, action) {
     // Each D1-backed metric has an explicit counting rule. Metrics without an
     // existing trustworthy source return null until Admin chooses manual input.
     const sourceValues={participants:impact.participants,completed_activities:impact.completed_activities,waste_tons:impact.waste_tons,completed_programs:Number(programs.total||0),education_sessions:Number(education.total||0)};
-    const counters=(cfgRows.results||[]).map(c=>{
+    const counters=completeImpactConfigRows(cfgRows.results).map(c=>{
       let value=null;
       if(c.data_source==='manual') value=c.manual_value===null||c.manual_value===undefined?null:Number(c.manual_value);
       else if(c.data_source==='d1'&&IMPACT_D1_KEYS.has(c.metric_key)&&Object.prototype.hasOwnProperty.call(sourceValues,c.metric_key)) {
@@ -520,7 +522,7 @@ async function handleAdmin(env, request, action, p) {
     assert(ADMIN_ROLES.has(user.role),403,'Chỉ Admin Tổng / Administrator được cấu hình các thẻ Dấu ấn xanh.');
     if(request.method==='GET'){
       const rows=await env.DB.prepare(`SELECT * FROM impact_counter_config WHERE metric_key IN (${IMPACT_DISPLAY_KEYS.map(()=>'?').join(',')}) ORDER BY sort_order,metric_key`).bind(...IMPACT_DISPLAY_KEYS).all();
-      return json({ok:true,items:rows.results});
+      return json({ok:true,items:completeImpactConfigRows(rows.results)});
     }
     if(request.method==='PUT'){
       const b=await readJson(request),items=Array.isArray(b.items)?b.items:[];

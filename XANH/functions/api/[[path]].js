@@ -54,6 +54,43 @@ async function settingsSet(env, key, value) {
   await env.DB.prepare(`INSERT INTO site_settings(key,value_json,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at`).bind(key, JSON.stringify(value || {}), now()).run();
 }
 
+async function signCttPayload(secret, timestamp, nonce, raw) {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${timestamp}.${nonce}.${raw}`));
+  return 'v1=' + Array.from(new Uint8Array(signature)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+async function deliverCttSubmission(env, payload) {
+  const secret = String(env.XANH_CTT_SHARED_SECRET || '');
+  if (secret.length < 32) {
+    await env.DB.prepare(`UPDATE ctt_integration_outbox SET state='not_configured',attempts=attempts+1,last_error=?,updated_at=? WHERE submission_code=?`).bind('Chưa cấu hình XANH_CTT_SHARED_SECRET', now(), payload.code).run();
+    return { sent: false, reason: 'not_configured' };
+  }
+  const endpoint = String(env.XANH_CTT_ENDPOINT || 'https://ctt.skyfirst.io.vn/api/integrations/xanh/submissions');
+  if (!endpoint.startsWith('https://')) {
+    await env.DB.prepare(`UPDATE ctt_integration_outbox SET state='failed',attempts=attempts+1,last_error=?,updated_at=? WHERE submission_code=?`).bind('Endpoint CTT phải dùng HTTPS', now(), payload.code).run();
+    return { sent: false, reason: 'invalid_endpoint' };
+  }
+  const raw = JSON.stringify(payload), timestamp = String(Math.floor(Date.now()/1000)), nonce = randomToken(24);
+  try {
+    const signature = await signCttPayload(secret, timestamp, nonce, raw);
+    const response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-SFN-Timestamp': timestamp, 'X-SFN-Nonce': nonce, 'X-SFN-Signature': signature }, body: raw, signal: AbortSignal.timeout(8000) });
+    const text = await response.text();
+    if (response.ok) {
+      await env.DB.prepare(`UPDATE ctt_integration_outbox SET state='sent',attempts=attempts+1,last_http_status=?,last_error='',updated_at=?,sent_at=? WHERE submission_code=?`).bind(response.status, now(), now(), payload.code).run();
+      return { sent: true, status: response.status };
+    }
+    await env.DB.prepare(`UPDATE ctt_integration_outbox SET state='failed',attempts=attempts+1,last_http_status=?,last_error=?,updated_at=? WHERE submission_code=?`).bind(response.status, `CTT HTTP ${response.status}: ${text.slice(0,300)}`, now(), payload.code).run();
+    return { sent: false, reason: 'http_error', status: response.status };
+  } catch (e) {
+    await env.DB.prepare(`UPDATE ctt_integration_outbox SET state='failed',attempts=attempts+1,last_error=?,updated_at=? WHERE submission_code=?`).bind(String(e?.message||e).slice(0,500), now(), payload.code).run();
+    return { sent: false, reason: 'network_error' };
+  }
+}
+async function queueCttSubmission(env, payload) {
+  await env.DB.prepare(`INSERT INTO ctt_integration_outbox(submission_code,payload_json,state,created_at,updated_at) VALUES(?,?,'pending',?,?) ON CONFLICT(submission_code) DO NOTHING`).bind(payload.code, JSON.stringify(payload), now(), now()).run();
+  return deliverCttSubmission(env, payload);
+}
+
 async function sendMail(env, { to, subject, html }) {
   if (!env.RESEND_API_KEY) return { sent: false, reason: 'RESEND_API_KEY chưa được cấu hình' };
   const from = env.EMAIL_FROM || 'Xanh Sky First <xanh@skyfirst.io.vn>';
@@ -397,7 +434,11 @@ async function handlePublic(env, request, action) {
     let emailSent=false;
     if(settings.confirmation_email&&validEmail(email)){const m=await sendMail(env,{to:email,subject:`Xác nhận hồ sơ ${code} · Xanh Sky First`,html:`<p>Xin chào ${escapeHtml(name)},</p><p>Xanh Sky First đã nhận hồ sơ của bạn cho <b>${escapeHtml(form.name)}</b>.</p><p>Mã hồ sơ: <b>${code}</b></p><p>${escapeHtml(settings.confirmation_message)}</p>`}); emailSent=!!m.sent;}
     if(emailSent) await env.DB.prepare(`UPDATE submission_events SET email_sent=1 WHERE submission_id=? AND event_type='created'`).bind(sid).run();
-    return json({ok:true,code,message:settings.confirmation_message,title:settings.confirmation_title},201);
+    // Send only necessary metadata to CTT. The Xanh submission remains authoritative and is not rolled back if CTT is unavailable.
+    const cttPayload={source:'xanh-sky-first',code,full_name:name,email,form_name:form.name,status:'Đã tiếp nhận',submitted_at:t,tracking_url:`${env.APP_URL||'https://xanh.skyfirst.io.vn'}/ho-so?code=${encodeURIComponent(code)}`};
+    let cttSync={sent:false,reason:'not_attempted'};
+    try{cttSync=await queueCttSubmission(env,cttPayload);}catch(err){console.error('CTT_OUTBOX_QUEUE_FAILED',String(err?.message||err));}
+    return json({ok:true,code,message:settings.confirmation_message,title:settings.confirmation_title,ctt_sync:cttSync.sent?'sent':(cttSync.reason||'pending')},201);
   }
   throw new HttpError(404,'Không tìm thấy API công khai.');
 }
@@ -642,6 +683,21 @@ async function handleAdmin(env, request, action, p) {
   }
   if(action==='newsletter'&&request.method==='GET'){
     assert(user.role==='root_admin'||user.role==='administrator'||user.role==='content_editor',403,'Bạn không có quyền xem newsletter.');const rows=await env.DB.prepare(`SELECT id,email,preferences_json,status,created_at,updated_at FROM newsletter_subscribers ORDER BY created_at DESC LIMIT 1000`).all();return json({ok:true,items:rows.results.map(x=>({...x,preferences:asJson(x.preferences_json,[])}))});
+  }
+
+  if(action==='ctt-integration'&&request.method==='GET'){
+    assert(ADMIN_ROLES.has(user.role),403,'Chỉ quản trị viên được xem trạng thái tích hợp CTT.');
+    const rows=await env.DB.prepare(`SELECT submission_code,state,attempts,last_http_status,last_error,created_at,updated_at,sent_at FROM ctt_integration_outbox ORDER BY updated_at DESC LIMIT 300`).all();
+    return json({ok:true,items:rows.results||[]});
+  }
+  if(action==='ctt-integration'&&p[2]==='retry'&&request.method==='POST'){
+    assert(ADMIN_ROLES.has(user.role),403,'Chỉ quản trị viên được gửi lại dữ liệu sang CTT.');
+    const code=decodeURIComponent(p[3]||'');
+    const row=await env.DB.prepare(`SELECT payload_json FROM ctt_integration_outbox WHERE submission_code=?`).bind(code).first();
+    assert(row,404,'Không tìm thấy bản ghi đồng bộ.');
+    const payload=asJson(row.payload_json,null);assert(payload,500,'Dữ liệu đồng bộ không hợp lệ.');
+    const result=await deliverCttSubmission(env,payload);await audit(env,user.id,'ctt.integration.retry','submission',code,{sent:!!result.sent,reason:result.reason||'',status:result.status||null},request);
+    return json({ok:!!result.sent,state:result.sent?'sent':'failed',reason:result.reason||null,status:result.status||null});
   }
 
   throw new HttpError(404,'Không tìm thấy API quản trị.');

@@ -38,13 +38,15 @@ function pageOut(row) {
   if (!row) return null;
   return { ...row, blocks: asJson(row.blocks_json, []), seo: asJson(row.seo_json, {}) };
 }
-function mediaOut(row) { return row ? { ...row, url: `/api/media/${row.id}` } : null; }
+function mediaOut(row) { return row ? { ...row, visibility: row.visibility==='private'?'private':'public', url: `/api/media/${row.id}` } : null; }
 
 async function rateLimit(env, request, bucket, limit, seconds) {
   const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
   const keyHash = await sha256Hex(`${bucket}:${ip}`);
   const ts = Math.floor(Date.now() / 1000);
   const windowStart = Math.floor(ts / seconds) * seconds;
+  // Bound historical rate-limit storage without a separately scheduled worker.
+  await env.DB.prepare(`DELETE FROM rate_limits WHERE window_start < ?`).bind(ts - 7 * 86400).run();
   await env.DB.prepare(`INSERT INTO rate_limits(bucket,key_hash,window_start,hits) VALUES(?,?,?,1)
     ON CONFLICT(bucket,key_hash,window_start) DO UPDATE SET hits=hits+1`).bind(bucket,keyHash,windowStart).run();
   const row = await env.DB.prepare(`SELECT hits FROM rate_limits WHERE bucket=? AND key_hash=? AND window_start=?`).bind(bucket,keyHash,windowStart).first();
@@ -169,13 +171,20 @@ async function handleAuth(env, request, action) {
     assert(await verifyPassword(String(b.current_password||''),full.password_hash),400,'Mật khẩu hiện tại không đúng.');
     const next=String(b.new_password||''); assert(next.length>=10,400,'Mật khẩu mới phải có ít nhất 10 ký tự.');
     const nh=await hashPassword(next);
-    await env.DB.prepare(`UPDATE users SET password_hash=?,updated_at=? WHERE id=?`).bind(nh,now(),u.id).run();
-    await env.DB.prepare(`DELETE FROM sessions WHERE user_id=? AND id<>?`).bind(u.id,u.session_id).run();
+    const changedAt=now();
+    const changed=await env.DB.batch([
+      env.DB.prepare(`UPDATE users SET password_hash=?,updated_at=? WHERE id=? AND password_hash=?`).bind(nh,changedAt,u.id,full.password_hash),
+      env.DB.prepare(`UPDATE password_reset_tokens SET used_at=? WHERE user_id=? AND used_at IS NULL AND EXISTS (SELECT 1 FROM users WHERE id=? AND password_hash=?)`).bind(changedAt,u.id,u.id,nh),
+      env.DB.prepare(`DELETE FROM sessions WHERE user_id=? AND id<>? AND EXISTS (SELECT 1 FROM users WHERE id=? AND password_hash=?)`).bind(u.id,u.session_id,u.id,nh),
+    ]);
+    assert(Number(changed?.[0]?.meta?.changes||0)===1,409,'Mật khẩu đã được thay đổi trong một yêu cầu khác. Vui lòng đăng nhập lại.');
     await audit(env,u.id,'auth.change_password','user',u.id,{pbkdf2_iterations:PBKDF2_ITERATIONS},request);
     return json({ok:true,pbkdf2_iterations:PBKDF2_ITERATIONS});
   }
   if (action === 'request-reset' && request.method === 'POST') {
-    await rateLimit(env,request,'reset',5,3600); const b=await readJson(request); const email=cleanText(b.email,200).toLowerCase();
+    await rateLimit(env,request,'reset',5,3600);
+    await env.DB.prepare(`DELETE FROM password_reset_tokens WHERE used_at IS NOT NULL OR expires_at<=?`).bind(now()).run();
+    const b=await readJson(request); const email=cleanText(b.email,200).toLowerCase();
     const u=await env.DB.prepare(`SELECT id,name,email FROM users WHERE email=? AND status='active'`).bind(email).first();
     if (u) {
       const token=randomToken(32), tokenHash=await sha256Hex(token), expires=new Date(Date.now()+30*60000).toISOString();
@@ -192,11 +201,12 @@ async function handleAuth(env, request, action) {
     const th=await sha256Hex(token); const row=await env.DB.prepare(`SELECT * FROM password_reset_tokens WHERE token_hash=? AND used_at IS NULL AND expires_at>?`).bind(th,now()).first();
     assert(row,400,'Liên kết đặt lại mật khẩu không hợp lệ hoặc đã hết hạn.');
     const ph=await hashPassword(password); const t=now();
-    await env.DB.batch([
-      env.DB.prepare(`UPDATE users SET password_hash=?,updated_at=? WHERE id=?`).bind(ph,t,row.user_id),
-      env.DB.prepare(`UPDATE password_reset_tokens SET used_at=? WHERE id=?`).bind(t,row.id),
-      env.DB.prepare(`DELETE FROM sessions WHERE user_id=?`).bind(row.user_id),
+    const resetResults=await env.DB.batch([
+      env.DB.prepare(`UPDATE users SET password_hash=?,updated_at=? WHERE id=? AND status='active' AND EXISTS (SELECT 1 FROM password_reset_tokens WHERE id=? AND user_id=? AND used_at IS NULL AND expires_at>?)`).bind(ph,t,row.user_id,row.id,row.user_id,t),
+      env.DB.prepare(`UPDATE password_reset_tokens SET used_at=? WHERE user_id=? AND used_at IS NULL AND EXISTS (SELECT 1 FROM password_reset_tokens WHERE id=? AND user_id=? AND used_at IS NULL AND expires_at>?)`).bind(t,row.user_id,row.id,row.user_id,t),
+      env.DB.prepare(`DELETE FROM sessions WHERE user_id=? AND EXISTS (SELECT 1 FROM password_reset_tokens WHERE id=? AND user_id=? AND used_at=?)`).bind(row.user_id,row.id,row.user_id,t),
     ]);
+    assert(Number(resetResults?.[0]?.meta?.changes||0)===1,409,'Liên kết đặt lại mật khẩu đã được sử dụng hoặc hết hạn.');
     await audit(env,row.user_id,'auth.reset_password','user',row.user_id,{pbkdf2_iterations:PBKDF2_ITERATIONS},request);
     return json({ok:true});
   }
@@ -206,9 +216,13 @@ async function handleAuth(env, request, action) {
 function sanitizeFields(input) {
   const allowed = new Set(['text','email','phone','url','textarea','select','radio','checkbox','date','time','datetime','number','rating','file','signature','consent','section']);
   const fields = Array.isArray(input) ? input.slice(0,80) : [];
+  const usedIds = new Set();
   return fields.map((f, i) => {
     const type = allowed.has(String(f?.type||'')) ? String(f.type) : 'text';
-    const id = safeSlug(f?.id || f?.label || `field-${i+1}`) || `field-${i+1}`;
+    const baseId = (safeSlug(f?.id || f?.label || `field-${i+1}`) || `field-${i+1}`).slice(0,110);
+    let id = baseId, suffix = 2;
+    while (usedIds.has(id)) { id = `${baseId.slice(0, 110 - String(suffix).length)}-${suffix}`; suffix += 1; }
+    usedIds.add(id);
     const label = cleanText(f?.label || (type==='section' ? 'Phần mới' : `Trường ${i+1}`), 180);
     const options = ['select','radio','checkbox'].includes(type) && Array.isArray(f?.options)
       ? [...new Set(f.options.map(x=>cleanText(x,120)).filter(Boolean))].slice(0,50) : [];
@@ -224,6 +238,12 @@ function sanitizeFields(input) {
       conditional: f?.conditional && typeof f.conditional==='object' ? f.conditional : undefined,
     };
   });
+}
+function formCapacity(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  assert(Number.isSafeInteger(n) && n >= 1 && n <= 1000000, 400, 'Sức chứa phải là số nguyên từ 1 đến 1.000.000; để trống nếu không giới hạn.');
+  return n;
 }
 function validateFormWindow(opensAt, closesAt) {
   const start = opensAt ? new Date(opensAt).getTime() : null;
@@ -257,8 +277,8 @@ async function publishDueContent(env) {
 }
 async function assertMediaImage(env, id) {
   if (!id) return null;
-  const row = await env.DB.prepare(`SELECT id,mime_type FROM media WHERE id=?`).bind(Number(id)).first();
-  assert(row && String(row.mime_type).startsWith('image/'),400,'Ảnh đã chọn không hợp lệ.');
+  const row = await env.DB.prepare(`SELECT id,mime_type,visibility FROM media WHERE id=?`).bind(Number(id)).first();
+  assert(row && String(row.mime_type).startsWith('image/') && row.visibility!=='private',400,'Ảnh đã chọn không hợp lệ hoặc đang ở chế độ riêng tư.');
   return Number(row.id);
 }
 function validateSubmissionAnswers(fields, answers) {
@@ -291,6 +311,37 @@ function validateSubmissionAnswers(fields, answers) {
     clean[f.id]=v;
   }
   return clean;
+}
+
+function newsletterPageShell(title,body){
+  return new Response(`<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>${escapeHtml(title)} | Xanh Sky First</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;box-sizing:border-box;background:#f5f8f4;color:#20332a;font:16px/1.65 system-ui,sans-serif}.panel{width:min(100%,560px);padding:32px;border:1px solid #dbe7dc;border-radius:24px;background:#fff;box-shadow:0 18px 56px #173b2d12}h1{margin:0 0 12px;font-size:clamp(25px,5vw,34px);line-height:1.2}p{color:#53675a}button{border:0;border-radius:999px;padding:13px 18px;background:#23794f;color:#fff;font:inherit;font-weight:750;cursor:pointer}a{color:#23794f}</style></head><body><main class="panel"><p><b>XANH SKY FIRST</b></p>${body}</main></body></html>`,{status:200,headers:{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"}});
+}
+function newsletterTokenConfirmationPage({kind,email,token}){
+  const verify=kind==='verify',title=verify?'Xác nhận đăng ký nhận tin':'Xác nhận hủy nhận tin';
+  const message=verify?'Nhấn xác nhận bên dưới để kích hoạt đăng ký newsletter. Việc mở liên kết này chưa thay đổi trạng thái đăng ký.':'Nhấn xác nhận bên dưới nếu bạn thực sự muốn ngừng nhận newsletter. Việc mở liên kết này chưa hủy đăng ký.';
+  const endpoint=verify?'newsletter-verify':'newsletter-unsubscribe';
+  return newsletterPageShell(title,`<h1>${title}</h1><p>${message}</p><form method="post" action="/api/public/${endpoint}"><input type="hidden" name="email" value="${escapeHtml(email)}"><input type="hidden" name="token" value="${escapeHtml(token)}"><button type="submit">${verify?'Xác nhận đăng ký':'Xác nhận hủy đăng ký'}</button></form>`);
+}
+function newsletterResultPage(message,ok){
+  return newsletterPageShell(ok?'Đã cập nhật lựa chọn':'Không thể xác nhận',`<h1>${ok?'Đã hoàn tất':'Không thể thực hiện'}</h1><p>${escapeHtml(message)}</p><p><a href="/">Quay lại Xanh Sky First</a></p>`);
+}
+
+async function cleanupExpiredFormUploads(env) {
+  try {
+    const expired = await env.DB.prepare(`SELECT id,r2_key FROM form_uploads WHERE claimed_submission_id IS NULL AND expires_at IS NOT NULL AND expires_at<=? ORDER BY expires_at LIMIT 100`).bind(now()).all();
+    for (const item of expired.results || []) {
+      try {
+        await env.STORAGE.delete(item.r2_key);
+        await env.DB.prepare(`DELETE FROM form_uploads WHERE id=? AND claimed_submission_id IS NULL AND expires_at<=?`).bind(item.id,now()).run();
+      } catch (error) {
+        // Keep the database row for a later retry if R2 is temporarily unavailable.
+        console.warn('FORM_UPLOAD_CLEANUP_DEFERRED', String(error?.message || error).slice(0,160));
+      }
+    }
+  } catch (error) {
+    // During a staged migration the lifecycle column may not exist yet; normal requests remain available.
+    console.warn('FORM_UPLOAD_CLEANUP_UNAVAILABLE', String(error?.message || error).slice(0,160));
+  }
 }
 
 async function handlePublic(env, request, action) {
@@ -373,21 +424,44 @@ async function handlePublic(env, request, action) {
     await env.DB.prepare(`INSERT INTO newsletter_subscribers(email,preferences_json,status,verify_token_hash,unsubscribe_token_hash,created_at,updated_at) VALUES(?,?,'pending',?,?,?,?) ON CONFLICT(email) DO UPDATE SET preferences_json=excluded.preferences_json,status='pending',verify_token_hash=excluded.verify_token_hash,unsubscribe_token_hash=excluded.unsubscribe_token_hash,updated_at=excluded.updated_at`).bind(email,JSON.stringify(prefs),vh,uh,t,t).run();
     const origin=env.APP_URL || new URL(request.url).origin; const link=`${origin}/api/public/newsletter-verify?token=${encodeURIComponent(verify)}&email=${encodeURIComponent(email)}`;
     const unsubscribeLink=`${origin}/api/public/newsletter-unsubscribe?token=${encodeURIComponent(unsubscribe)}&email=${encodeURIComponent(email)}`;
-    await sendMail(env,{to:email,subject:'Xác nhận nhận newsletter Xanh Sky First',html:`<p>Vui lòng xác nhận đăng ký newsletter:</p><p><a href="${link}">Xác nhận email</a></p><p>Nếu bạn không muốn nhận nội dung này, có thể <a href="${unsubscribeLink}">hủy đăng ký</a>.</p>`});
-    return json({ok:true,message:'Vui lòng kiểm tra email để xác nhận đăng ký.'},201);
+    let mailResult={sent:false,reason:'unknown'};
+    try {
+      mailResult=await sendMail(env,{to:email,subject:'Xác nhận nhận newsletter Xanh Sky First',html:`<p>Vui lòng xác nhận đăng ký newsletter:</p><p><a href="${link}">Xác nhận email</a></p><p>Nếu bạn không muốn nhận nội dung này, có thể <a href="${unsubscribeLink}">hủy đăng ký</a>.</p>`});
+    } catch (error) {
+      console.warn('NEWSLETTER_CONFIRMATION_EMAIL_FAILED',String(error?.message||error).slice(0,180));
+    }
+    if(!mailResult.sent) return json({ok:true,pending:true,confirmation_email_sent:false,message:'Yêu cầu đã được ghi nhận tạm thời, nhưng email xác nhận chưa gửi được. Vui lòng thử lại sau.'},202);
+    return json({ok:true,pending:true,confirmation_email_sent:true,message:'Vui lòng kiểm tra email để xác nhận đăng ký.'},201);
   }
-  if (action === 'newsletter-verify' && request.method==='GET') {
-    const email=cleanText(u.searchParams.get('email'),200).toLowerCase(), token=String(u.searchParams.get('token')||''), th=await sha256Hex(token);
-    const r=await env.DB.prepare(`UPDATE newsletter_subscribers SET status='active',verify_token_hash=NULL,updated_at=? WHERE email=? AND verify_token_hash=?`).bind(now(),email,th).run();
-    return new Response((r.meta.changes||0)>0?'Đã xác nhận newsletter Xanh Sky First.':'Liên kết xác nhận không hợp lệ.',{status:(r.meta.changes||0)>0?200:400,headers:{'Content-Type':'text/plain; charset=utf-8'}});
+  if (action === 'newsletter-verify' && ['GET','POST'].includes(request.method)) {
+    let email,token;
+    if(request.method==='GET'){
+      email=cleanText(u.searchParams.get('email'),200).toLowerCase();token=String(u.searchParams.get('token')||'');
+      assert(validEmail(email)&&token.length>=20,400,'Liên kết xác nhận không hợp lệ.');
+      return newsletterTokenConfirmationPage({kind:'verify',email,token});
+    }
+    requireSameOrigin(request);
+    const fd=await request.formData();email=cleanText(fd.get('email'),200).toLowerCase();token=String(fd.get('token')||'');
+    assert(validEmail(email)&&token.length>=20,400,'Liên kết xác nhận không hợp lệ.');
+    const th=await sha256Hex(token);
+    const r=await env.DB.prepare(`UPDATE newsletter_subscribers SET status='active',verify_token_hash=NULL,updated_at=? WHERE email=? AND verify_token_hash=? AND status='pending'`).bind(now(),email,th).run();
+    const ok=Number(r.meta?.changes||0)>0;
+    return newsletterResultPage(ok?'Đã xác nhận newsletter Xanh Sky First.':'Liên kết xác nhận không hợp lệ hoặc đã được sử dụng.',ok);
   }
-  if (action === 'newsletter-unsubscribe' && request.method==='GET') {
-    const email=cleanText(u.searchParams.get('email'),200).toLowerCase(), token=String(u.searchParams.get('token')||'');
+  if (action === 'newsletter-unsubscribe' && ['GET','POST'].includes(request.method)) {
+    let email,token;
+    if(request.method==='GET'){
+      email=cleanText(u.searchParams.get('email'),200).toLowerCase();token=String(u.searchParams.get('token')||'');
+      assert(validEmail(email)&&token.length>=20,400,'Liên kết hủy đăng ký không hợp lệ.');
+      return newsletterTokenConfirmationPage({kind:'unsubscribe',email,token});
+    }
+    requireSameOrigin(request);
+    const fd=await request.formData();email=cleanText(fd.get('email'),200).toLowerCase();token=String(fd.get('token')||'');
     assert(validEmail(email)&&token.length>=20,400,'Liên kết hủy đăng ký không hợp lệ.');
     const th=await sha256Hex(token);
-    const r=await env.DB.prepare(`UPDATE newsletter_subscribers SET status='unsubscribed',verify_token_hash=NULL,updated_at=? WHERE email=? AND unsubscribe_token_hash=?`).bind(now(),email,th).run();
+    const r=await env.DB.prepare(`UPDATE newsletter_subscribers SET status='unsubscribed',verify_token_hash=NULL,updated_at=? WHERE email=? AND unsubscribe_token_hash=? AND status<>'unsubscribed'`).bind(now(),email,th).run();
     const ok=Number(r.meta?.changes||0)>0;
-    return new Response(ok?'Bạn đã hủy đăng ký newsletter Xanh Sky First. Email này sẽ không còn nhận nội dung newsletter.':'Liên kết hủy đăng ký không hợp lệ hoặc đã được sử dụng.',{status:ok?200:400,headers:{'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-store'}});
+    return newsletterResultPage(ok?'Bạn đã hủy đăng ký newsletter Xanh Sky First. Email này sẽ không còn nhận nội dung newsletter.':'Liên kết hủy đăng ký không hợp lệ hoặc đã được sử dụng.',ok);
   }
   if (action === 'people' && request.method==='GET') {
     const rows=await env.DB.prepare(`SELECT p.id,p.slug,p.name,p.title,p.role_group,p.bio,p.expertise,p.photo_media_id,p.links_json,p.seo_json,m.alt_text AS photo_alt,m.focus_x AS photo_focus_x,m.focus_y AS photo_focus_y FROM people p LEFT JOIN media m ON m.id=p.photo_media_id WHERE p.is_public=1 ORDER BY p.sort_order,p.name`).all();
@@ -417,6 +491,7 @@ async function handlePublic(env, request, action) {
     return json({ok:true,item:row});
   }
   if (action === 'form-upload' && request.method==='POST') {
+    await cleanupExpiredFormUploads(env);
     await rateLimit(env,request,'form-upload',12,3600);
     const ct=request.headers.get('content-type')||''; assert(ct.includes('multipart/form-data'),415,'Upload phải dùng multipart/form-data.');
     const fd=await request.formData(), formId=Number(fd.get('form_id')), fieldId=cleanText(fd.get('field_id'),120), file=fd.get('file');
@@ -424,19 +499,29 @@ async function handlePublic(env, request, action) {
     const uploadField=sanitizeFields(asJson(form.fields_json,[])).find(x=>x.id===fieldId&&['file','signature'].includes(x.type)); assert(uploadField,400,'Trường upload không hợp lệ.');
     if(form.opens_at) assert(new Date(form.opens_at)<=new Date(),409,'Biểu mẫu chưa đến thời gian mở.');
     if(form.closes_at) assert(new Date(form.closes_at)>new Date(),409,'Biểu mẫu đã hết hạn.');
-    const v=await validateUpload(file), token=randomToken(24), tokenHash=await sha256Hex(token), key=`form-uploads/${formId}/${crypto.randomUUID()}.${v.ext}`;
+    const v=await validateUpload(file), token=randomToken(24), tokenHash=await sha256Hex(token), key=`form-uploads/${formId}/${crypto.randomUUID()}.${v.ext}`, createdAt=now(), expiresAt=new Date(Date.now()+24*60*60*1000).toISOString();
     await env.STORAGE.put(key,v.body,{httpMetadata:{contentType:v.mime},customMetadata:{originalName:file.name,purpose:'form-upload'}});
-    const r=await env.DB.prepare(`INSERT INTO form_uploads(form_id,upload_token_hash,r2_key,filename,mime_type,size_bytes,created_at) VALUES(?,?,?,?,?,?,?)`).bind(formId,tokenHash,key,cleanText(file.name,240),v.mime,v.size,now()).run();
-    return json({ok:true,upload:{id:r.meta.last_row_id,upload_token:token,filename:cleanText(file.name,240),mime_type:v.mime,size_bytes:v.size}},201);
+    let r;
+    try {
+      r=await env.DB.prepare(`INSERT INTO form_uploads(form_id,upload_token_hash,r2_key,filename,mime_type,size_bytes,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?)`).bind(formId,tokenHash,key,cleanText(file.name,240),v.mime,v.size,createdAt,expiresAt).run();
+    } catch (error) {
+      try { await env.STORAGE.delete(key); } catch (cleanupError) { console.warn('FORM_UPLOAD_ORPHAN_CLEANUP_FAILED', String(cleanupError?.message||cleanupError).slice(0,160)); }
+      throw error;
+    }
+    return json({ok:true,upload:{id:r.meta.last_row_id,upload_token:token,filename:cleanText(file.name,240),mime_type:v.mime,size_bytes:v.size,expires_at:expiresAt}},201);
   }
   if (action === 'form-submit' && request.method==='POST') {
+    await cleanupExpiredFormUploads(env);
     await rateLimit(env,request,'form-submit',10,3600); const b=await readJson(request); const form=await env.DB.prepare(`SELECT * FROM forms WHERE id=? AND status='open'`).bind(Number(b.form_id)).first(); assert(form,404,'Biểu mẫu chưa mở hoặc không tồn tại.');
     const settings=sanitizeFormSettings(asJson(form.settings_json,{}));
     const fields=sanitizeFields(asJson(form.fields_json,[]));
 
     if(form.opens_at) assert(new Date(form.opens_at)<=new Date(),409,'Biểu mẫu chưa đến thời gian mở.');
     if(form.closes_at) assert(new Date(form.closes_at)>new Date(),409,settings.closed_message);
-    if(form.capacity){const c=await env.DB.prepare(`SELECT COUNT(*) c FROM form_submissions WHERE form_id=?`).bind(form.id).first();assert(Number(c.c)<Number(form.capacity),409,'Biểu mẫu đã đủ số lượng.');}
+    const configuredCapacity = form.capacity===null||form.capacity===undefined||form.capacity===''?null:Number(form.capacity);
+    assert(configuredCapacity===null||(Number.isSafeInteger(configuredCapacity)&&configuredCapacity>=0&&configuredCapacity<=1000000),500,'Cấu hình sức chứa của biểu mẫu không hợp lệ; vui lòng cập nhật trong Management Center.');
+    const maxCapacity = configuredCapacity!==null&&configuredCapacity>0?configuredCapacity:null;
+    if(maxCapacity!==null){const c=await env.DB.prepare(`SELECT COUNT(*) c FROM form_submissions WHERE form_id=?`).bind(form.id).first();assert(Number(c.c)<maxCapacity,409,'Biểu mẫu đã đủ số lượng.');}
     const answers=validateSubmissionAnswers(fields,b.answers||{});
     // Form Builder is the single source of truth: no hidden/hard-coded identity fields.
     // These three columns are only searchable metadata extracted from configured answers when present.
@@ -453,20 +538,27 @@ async function handlePublic(env, request, action) {
     for(const f of fields.filter(x=>['file','signature'].includes(x.type))){
       const a=answers[f.id]; if(!a?.upload_token) continue;
       const th=await sha256Hex(a.upload_token);
-      const up=await env.DB.prepare(`SELECT id FROM form_uploads WHERE form_id=? AND upload_token_hash=? AND claimed_submission_id IS NULL`).bind(form.id,th).first();
+      const up=await env.DB.prepare(`SELECT id FROM form_uploads WHERE form_id=? AND upload_token_hash=? AND claimed_submission_id IS NULL AND expires_at>?`).bind(form.id,th,now()).first();
       assert(up,400,`Tệp tại “${f.label}” không hợp lệ hoặc đã được sử dụng.`);
       claimedUploads.push(up.id); answers[f.id].upload_id=up.id; delete answers[f.id].upload_token;
     }
     const code=`XSF-${Date.now().toString(36).toUpperCase()}-${randomToken(3).slice(0,4).toUpperCase()}`,t=now();
-    const r=await env.DB.prepare(`INSERT INTO form_submissions(form_id,code,full_name,email,phone,answers_json,status,created_at,updated_at) VALUES(?,?,?,?,?,?,'new',?,?)`).bind(form.id,code,name,email,phone,JSON.stringify(answers),t,t).run();
+    const capacityClause=maxCapacity===null?'1=1':'(SELECT COUNT(*) FROM form_submissions WHERE form_id=?) < ?';
+    const uploadClause=claimedUploads.length?`(SELECT COUNT(*) FROM form_uploads WHERE id IN (${claimedUploads.map(()=>'?').join(',')}) AND form_id=? AND claimed_submission_id IS NULL AND expires_at>?)=?`:'1=1';
+    const insertBindings=[form.id,code,name,email,phone,JSON.stringify(answers),t,t];
+    if(maxCapacity!==null)insertBindings.push(form.id,maxCapacity);
+    if(claimedUploads.length)insertBindings.push(...claimedUploads,form.id,t,claimedUploads.length);
+    const statements=[env.DB.prepare(`INSERT INTO form_submissions(form_id,code,full_name,email,phone,answers_json,status,created_at,updated_at) SELECT ?,?,?,?,?,?,'new',?,? WHERE ${capacityClause} AND ${uploadClause}`).bind(...insertBindings)];
+    for(const uploadId of claimedUploads)statements.push(env.DB.prepare(`UPDATE form_uploads SET claimed_submission_id=(SELECT id FROM form_submissions WHERE code=?),expires_at=NULL WHERE id=? AND form_id=? AND claimed_submission_id IS NULL AND EXISTS (SELECT 1 FROM form_submissions WHERE code=?)`).bind(code,uploadId,form.id,code));
+    const results=await env.DB.batch(statements),r=results[0];
+    assert(Number(r?.meta?.changes||0)===1,409,'Biểu mẫu vừa đủ số lượng hoặc một tệp đính kèm đã được sử dụng. Vui lòng tải lại và gửi lại hồ sơ.');
     const sid=r.meta.last_row_id;
-    for(const uploadId of claimedUploads) await env.DB.prepare(`UPDATE form_uploads SET claimed_submission_id=? WHERE id=? AND claimed_submission_id IS NULL`).bind(sid,uploadId).run();
     await env.DB.prepare(`INSERT INTO submission_events(submission_id,event_type,new_status,note,created_at) VALUES(?,'created','new','Hồ sơ được gửi từ website',?)`).bind(sid,t).run();
     let emailSent=false;
     if(settings.confirmation_email&&validEmail(email)){const m=await sendMail(env,{to:email,subject:`Xác nhận hồ sơ ${code} · Xanh Sky First`,html:`<p>Xin chào ${escapeHtml(name)},</p><p>Xanh Sky First đã nhận hồ sơ của bạn cho <b>${escapeHtml(form.name)}</b>.</p><p>Mã hồ sơ: <b>${code}</b></p><p>${escapeHtml(settings.confirmation_message)}</p>`}); emailSent=!!m.sent;}
     if(emailSent) await env.DB.prepare(`UPDATE submission_events SET email_sent=1 WHERE submission_id=? AND event_type='created'`).bind(sid).run();
     // Send only necessary metadata to CTT. The Xanh submission remains authoritative and is not rolled back if CTT is unavailable.
-    const cttPayload={source:'xanh-sky-first',code,full_name:name,email,form_name:form.name,status:'Đã tiếp nhận',submitted_at:t,tracking_url:`${env.APP_URL||'https://xanh.skyfirst.io.vn'}/ho-so?code=${encodeURIComponent(code)}`};
+    const cttPayload={source:'xanh-sky-first',code,full_name:name,email,form_name:form.name,status:'Đã tiếp nhận',submitted_at:t,tracking_url:`${env.APP_URL||'https://xanh.skyfirst.io.vn'}/tra-cuu?code=${encodeURIComponent(code)}`};
     let cttSync={sent:false,reason:'not_attempted'};
     try{cttSync=await queueCttSubmission(env,cttPayload);}catch(err){console.error('CTT_OUTBOX_QUEUE_FAILED',String(err?.message||err));}
     return json({ok:true,code,message:settings.confirmation_message,title:settings.confirmation_title,ctt_sync:cttSync.sent?'sent':(cttSync.reason||'pending')},201);
@@ -478,8 +570,21 @@ async function handleMedia(env, request, idPart) {
   if (request.method!=='GET' && request.method!=='HEAD') throw new HttpError(405,'Method not allowed');
   const id=Number(idPart); assert(Number.isInteger(id)&&id>0,400,'Media ID không hợp lệ.');
   const row=await env.DB.prepare(`SELECT * FROM media WHERE id=?`).bind(id).first(); assert(row,404,'Không tìm thấy media.');
+  if(row.visibility==='private'){
+    const viewer=await currentUser(env,request);
+    assert(viewer,401,'Cần đăng nhập để truy cập tệp riêng tư.');
+    assert(ADMIN_ROLES.has(viewer.role)||(canFeature(viewer,'media')&&Number(row.uploaded_by)===Number(viewer.id)),403,'Bạn không có quyền truy cập tệp riêng tư này.');
+  }
   const obj=await env.STORAGE.get(row.r2_key); assert(obj,404,'File media không còn tồn tại trong storage.');
-  const headers=new Headers(); headers.set('Content-Type',row.mime_type); headers.set('Cache-Control','public, max-age=31536000, immutable'); if(obj.httpEtag) headers.set('ETag',obj.httpEtag); headers.set('Content-Disposition',`inline; filename*=UTF-8''${encodeURIComponent(row.filename)}`); headers.set('X-Content-Type-Options','nosniff');
+  const headers=new Headers();
+  headers.set('Content-Type',row.mime_type);
+  headers.set('Cache-Control',row.visibility==='private'?'private, no-store':'public, max-age=86400');
+  if(obj.httpEtag) headers.set('ETag',obj.httpEtag);
+  const inlineTypes=new Set(['image/jpeg','image/png','image/webp','image/avif','image/gif','image/svg+xml','video/mp4','video/webm']);
+  headers.set('Content-Disposition',`${inlineTypes.has(row.mime_type)?'inline':'attachment'}; filename*=UTF-8''${encodeURIComponent(row.filename)}`);
+  headers.set('X-Content-Type-Options','nosniff');
+  headers.set('Referrer-Policy','no-referrer');
+  if(row.mime_type==='image/svg+xml') headers.set('Content-Security-Policy',"default-src 'none'; script-src 'none'; object-src 'none'; base-uri 'none'; sandbox");
   return new Response(request.method==='HEAD'?null:obj.body,{headers});
 }
 
@@ -576,7 +681,9 @@ async function handleAdmin(env, request, action, p) {
       env.DB.prepare(`SELECT COUNT(*) AS c FROM content_items WHERE status='draft'`).first(),
       env.DB.prepare(`SELECT COUNT(*) AS c FROM media`).first(),
       env.DB.prepare(`SELECT COALESCE(SUM(CASE WHEN verified=1 THEN confirmed_participants ELSE 0 END),0) AS participants, COALESCE(SUM(CASE WHEN verified=1 THEN volunteer_hours ELSE 0 END),0) AS hours FROM impact_records`).first(),
-      env.DB.prepare(`SELECT a.*,u.name AS user_name FROM audit_logs a LEFT JOIN users u ON u.id=a.user_id ORDER BY a.created_at DESC LIMIT 12`).all(),
+      ADMIN_ROLES.has(user.role)
+        ? env.DB.prepare(`SELECT a.id,a.action,a.object_type,a.object_id,a.created_at,u.name AS user_name FROM audit_logs a LEFT JOIN users u ON u.id=a.user_id ORDER BY a.created_at DESC LIMIT 12`).all()
+        : Promise.resolve({results:[]}),
     ]);
     return json({ok:true,stats:{pending_applications:Number(apps.c||0),pending_submissions:Number(forms.c||0),drafts:Number(drafts.c||0),media:Number(media.c||0),participants:Number(impact.participants||0),volunteer_hours:Number(impact.hours||0)},recent:auditRows.results});
   }
@@ -642,18 +749,43 @@ async function handleAdmin(env, request, action, p) {
 
   if(action==='media'){
     requireFeature(user,'media',write);
-    if(request.method==='GET'){const q=cleanText(u.searchParams.get('q'),120);let st=`SELECT * FROM media`,binds=[];if(q){st+=` WHERE filename LIKE ? OR alt_text LIKE ? OR caption LIKE ?`;binds=[`%${q}%`,`%${q}%`,`%${q}%`];}st+=` ORDER BY created_at DESC LIMIT 500`;const rows=await env.DB.prepare(st).bind(...binds).all();return json({ok:true,items:rows.results.map(mediaOut)});}
+    if(request.method==='GET'){
+      const q=cleanText(u.searchParams.get('q'),120),conditions=[],binds=[];
+      if(!ADMIN_ROLES.has(user.role)){conditions.push(`(visibility='public' OR uploaded_by=?)`);binds.push(user.id);}
+      if(q){conditions.push(`(filename LIKE ? OR alt_text LIKE ? OR caption LIKE ?)`);binds.push(`%${q}%`,`%${q}%`,`%${q}%`);}
+      let st=`SELECT * FROM media`;if(conditions.length)st+=` WHERE ${conditions.join(' AND ')}`;st+=` ORDER BY created_at DESC LIMIT 500`;
+      const rows=await env.DB.prepare(st).bind(...binds).all();return json({ok:true,items:rows.results.map(mediaOut)});
+    }
     if(request.method==='POST'){
-      const ct=request.headers.get('content-type')||'';assert(ct.includes('multipart/form-data'),415,'Upload phải dùng multipart/form-data.');const fd=await request.formData(),file=fd.get('file');const v=await validateUpload(file);const id=crypto.randomUUID(),key=mediaKey(id,v.ext);await env.STORAGE.put(key,v.body,{httpMetadata:{contentType:v.mime},customMetadata:{originalName:file.name}});
+      const ct=request.headers.get('content-type')||'';assert(ct.includes('multipart/form-data'),415,'Upload phải dùng multipart/form-data.');const fd=await request.formData(),file=fd.get('file');const v=await validateUpload(file);const id=crypto.randomUUID(),key=mediaKey(id,v.ext);
+      const requestedVisibility=String(fd.get('visibility')||'public');assert(['public','private'].includes(requestedVisibility),400,'Quyền truy cập tệp không hợp lệ.');assert(requestedVisibility!=='private'||ADMIN_ROLES.has(user.role),403,'Chỉ quản trị viên mới có thể tạo tệp riêng tư.');const visibility=requestedVisibility;
+      await env.STORAGE.put(key,v.body,{httpMetadata:{contentType:v.mime},customMetadata:{originalName:file.name,purpose:'media-library'}});
       const width=Math.max(0,Math.min(30000,Number(fd.get('width')||0)))||null,height=Math.max(0,Math.min(30000,Number(fd.get('height')||0)))||null,t=now();
-      const r=await env.DB.prepare(`INSERT INTO media(r2_key,filename,mime_type,size_bytes,width,height,alt_text,caption,credit,focus_x,focus_y,uploaded_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(key,cleanText(file.name,240),v.mime,v.size,width,height,cleanText(fd.get('alt_text'),500),cleanText(fd.get('caption'),1000),cleanText(fd.get('credit'),500),0.5,0.5,user.id,t,t).run();
-      await audit(env,user.id,'media.upload','media',r.meta.last_row_id,{mime:v.mime,size:v.size},request);return json({ok:true,item:mediaOut(await env.DB.prepare(`SELECT * FROM media WHERE id=?`).bind(r.meta.last_row_id).first())},201);
+      let r;
+      try {
+        r=await env.DB.prepare(`INSERT INTO media(r2_key,filename,mime_type,size_bytes,width,height,alt_text,caption,credit,focus_x,focus_y,uploaded_by,visibility,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(key,cleanText(file.name,240),v.mime,v.size,width,height,cleanText(fd.get('alt_text'),500),cleanText(fd.get('caption'),1000),cleanText(fd.get('credit'),500),0.5,0.5,user.id,visibility,t,t).run();
+      } catch (error) {
+        try { await env.STORAGE.delete(key); } catch (cleanupError) { console.warn('MEDIA_ORPHAN_CLEANUP_FAILED', String(cleanupError?.message||cleanupError).slice(0,160)); }
+        throw error;
+      }
+      await audit(env,user.id,'media.upload','media',r.meta.last_row_id,{mime:v.mime,size:v.size,visibility},request);return json({ok:true,item:mediaOut(await env.DB.prepare(`SELECT * FROM media WHERE id=?`).bind(r.meta.last_row_id).first())},201);
     }
   }
   if(action==='media-item' && p[2]){
     requireFeature(user,'media',write); const id=Number(p[2]);const m=await env.DB.prepare(`SELECT * FROM media WHERE id=?`).bind(id).first();assert(m,404,'Không tìm thấy media.');
+    if(m.visibility==='private')assert(ADMIN_ROLES.has(user.role)||Number(m.uploaded_by)===Number(user.id),403,'Bạn không có quyền truy cập metadata của tệp riêng tư này.');
     if(request.method==='GET')return json({ok:true,item:mediaOut(m)});
-    if(request.method==='PUT'){const b=await readJson(request);await env.DB.prepare(`UPDATE media SET alt_text=?,caption=?,credit=?,focus_x=?,focus_y=?,updated_at=? WHERE id=?`).bind(cleanText(b.alt_text??m.alt_text,500),cleanText(b.caption??m.caption,1000),cleanText(b.credit??m.credit,500),Math.min(1,Math.max(0,Number(b.focus_x??m.focus_x))),Math.min(1,Math.max(0,Number(b.focus_y??m.focus_y))),now(),id).run();await audit(env,user.id,'media.update','media',id,{},request);return json({ok:true});}
+    if(request.method==='PUT'){
+      const b=await readJson(request);let visibility=m.visibility==='private'?'private':'public';
+      if(Object.prototype.hasOwnProperty.call(b,'visibility')){
+        assert(ADMIN_ROLES.has(user.role),403,'Chỉ quản trị viên được thay đổi quyền truy cập media.');
+        assert(['public','private'].includes(b.visibility),400,'Quyền truy cập tệp không hợp lệ.');
+        assert(!(visibility==='public'&&b.visibility==='private'),409,'Tệp đã công khai không thể chuyển ngược sang riêng tư vì URL có thể đã được lưu hoặc cache. Hãy tải lên bản mới ở chế độ riêng tư.');
+        visibility=b.visibility;
+      }
+      await env.DB.prepare(`UPDATE media SET alt_text=?,caption=?,credit=?,focus_x=?,focus_y=?,visibility=?,updated_at=? WHERE id=?`).bind(cleanText(b.alt_text??m.alt_text,500),cleanText(b.caption??m.caption,1000),cleanText(b.credit??m.credit,500),Math.min(1,Math.max(0,Number(b.focus_x??m.focus_x))),Math.min(1,Math.max(0,Number(b.focus_y??m.focus_y))),visibility,now(),id).run();
+      await audit(env,user.id,'media.update','media',id,{visibility},request);return json({ok:true,visibility});
+    }
     if(request.method==='DELETE'){assert(ADMIN_ROLES.has(user.role),403,'Chỉ quản trị viên được xóa file media.');const refs=await env.DB.prepare(`SELECT (SELECT COUNT(*) FROM people WHERE photo_media_id=?) + (SELECT COUNT(*) FROM content_items WHERE cover_media_id=?) + (SELECT COUNT(*) FROM forms WHERE cover_media_id=?) AS c`).bind(id,id,id).first();assert(Number(refs.c||0)===0,409,'File đang được nội dung khác sử dụng. Hãy gỡ liên kết trước khi xóa.');await env.STORAGE.delete(m.r2_key);await env.DB.prepare(`DELETE FROM media WHERE id=?`).bind(id).run();await audit(env,user.id,'media.delete','media',id,{filename:m.filename},request);return json({ok:true});}
   }
 
@@ -674,11 +806,38 @@ async function handleAdmin(env, request, action, p) {
   if(action==='impact'){
     requireFeature(user,'impact',write);
     if(request.method==='GET'){const rows=await env.DB.prepare(`SELECT i.*,c.title AS activity_title FROM impact_records i LEFT JOIN content_items c ON c.id=i.activity_id ORDER BY i.updated_at DESC`).all();const acts=await env.DB.prepare(`SELECT id,title FROM content_items WHERE type='activity' ORDER BY updated_at DESC LIMIT 300`).all();return json({ok:true,items:rows.results,activities:acts.results});}
-    if(request.method==='POST'){const b=await readJson(request),activityId=Number(b.activity_id);assert(activityId>0,400,'Activity ID không hợp lệ.');const participants=Number(b.confirmed_participants||0),hours=Number(b.volunteer_hours||0),waste=Number(b.waste_tons||0),community=Number(b.community_reached||0),verified=bool(b.verified),notes=cleanText(b.notes,3000);assert([participants,hours,waste,community].every(Number.isFinite),400,'Các chỉ số Impact phải là số hợp lệ.');assert(participants>=0&&participants<=100000000&&hours>=0&&hours<=100000000&&waste>=0&&waste<=1000000&&community>=0&&community<=100000000,400,'Một hoặc nhiều chỉ số Impact nằm ngoài giới hạn cho phép.');assert(!verified||notes.length>=10,400,'Muốn xác minh Impact, hãy ghi ít nhất 10 ký tự về căn cứ xác minh.');const t=now();await env.DB.prepare(`INSERT INTO impact_records(activity_id,locality,confirmed_participants,volunteer_hours,waste_tons,community_reached,completed,verified,notes,verified_by,verified_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(activity_id) DO UPDATE SET locality=excluded.locality,confirmed_participants=excluded.confirmed_participants,volunteer_hours=excluded.volunteer_hours,waste_tons=excluded.waste_tons,community_reached=excluded.community_reached,completed=excluded.completed,verified=excluded.verified,notes=excluded.notes,verified_by=excluded.verified_by,verified_at=excluded.verified_at,updated_at=excluded.updated_at`).bind(activityId,cleanText(b.locality,160),participants,hours,waste,community,bool(b.completed)?1:0,verified?1:0,notes,user.id,verified?t:null,t,t).run();await audit(env,user.id,'impact.upsert','activity',activityId,{verified,waste_tons:waste,community_reached:community},request);return json({ok:true});}
+    if(request.method==='POST'){
+      const b=await readJson(request),activityId=Number(b.activity_id);
+      assert(Number.isSafeInteger(activityId)&&activityId>0,400,'Activity ID không hợp lệ.');
+      const activity=await env.DB.prepare(`SELECT id FROM content_items WHERE id=? AND type='activity'`).bind(activityId).first();
+      assert(activity,400,'Bản ghi Impact phải liên kết với một nội dung thuộc loại Hoạt động.');
+      const participants=Number(b.confirmed_participants||0),hours=Number(b.volunteer_hours||0),waste=Number(b.waste_tons||0),community=Number(b.community_reached||0),verified=bool(b.verified),notes=cleanText(b.notes,3000);
+      assert([participants,hours,waste,community].every(Number.isFinite),400,'Các chỉ số Impact phải là số hợp lệ.');
+      assert(participants>=0&&participants<=100000000&&hours>=0&&hours<=100000000&&waste>=0&&waste<=1000000&&community>=0&&community<=100000000,400,'Một hoặc nhiều chỉ số Impact nằm ngoài giới hạn cho phép.');
+      const locality=cleanText(b.locality,160),completed=bool(b.completed)?1:0;
+      const existing=await env.DB.prepare(`SELECT * FROM impact_records WHERE activity_id=?`).bind(activityId).first();
+      if(verified){
+        assert(ADMIN_ROLES.has(user.role),403,'Chỉ quản trị viên mới được xác minh số liệu tác động.');
+        assert(existing && existing.recorded_by!==null && existing.recorded_by!==undefined && Number(existing.recorded_by)!==Number(user.id),409,'Cần lưu lại số liệu để ghi nhận người nhập, sau đó một tài khoản quản trị khác xác minh độc lập.');
+        assert(Number(existing.confirmed_participants)===participants&&Number(existing.volunteer_hours)===hours&&Number(existing.waste_tons)===waste&&Number(existing.community_reached)===community&&Number(existing.completed)===completed&&String(existing.locality||'')===locality,409,'Không thể thay đổi số liệu trong cùng thao tác xác minh. Lưu thay đổi ở trạng thái chưa xác minh trước, sau đó yêu cầu một quản trị viên khác xác minh.');
+        assert(notes.length>=10,400,'Muốn xác minh Impact, hãy ghi ít nhất 10 ký tự về căn cứ xác minh.');
+      }
+      const t=now();
+      await env.DB.prepare(`INSERT INTO impact_records(activity_id,locality,confirmed_participants,volunteer_hours,waste_tons,community_reached,completed,verified,notes,verified_by,verified_at,recorded_by,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(activity_id) DO UPDATE SET locality=excluded.locality,confirmed_participants=excluded.confirmed_participants,volunteer_hours=excluded.volunteer_hours,waste_tons=excluded.waste_tons,community_reached=excluded.community_reached,completed=excluded.completed,verified=excluded.verified,notes=excluded.notes,verified_by=excluded.verified_by,verified_at=excluded.verified_at,recorded_by=CASE WHEN excluded.verified=0 THEN excluded.recorded_by ELSE impact_records.recorded_by END,updated_at=excluded.updated_at`)
+        .bind(activityId,locality,participants,hours,waste,community,completed,verified?1:0,notes,verified?user.id:null,verified?t:null,user.id,t,t).run();
+      await audit(env,user.id,'impact.upsert','activity',activityId,{verified,waste_tons:waste,community_reached:community},request);
+      return json({ok:true});
+    }
   }
 
   if(action==='audit' && request.method==='GET'){
-    requireFeature(user,'audit');const rows=await env.DB.prepare(`SELECT a.*,u.name AS user_name,u.email AS user_email FROM audit_logs a LEFT JOIN users u ON u.id=a.user_id ORDER BY a.created_at DESC LIMIT 500`).all();return json({ok:true,items:rows.results.map(x=>({...x,metadata:asJson(x.metadata_json,{})}))});
+    requireFeature(user,'audit');
+    const rows = user.role==='viewer'
+      ? await env.DB.prepare(`SELECT a.id,a.action,a.object_type,a.object_id,a.created_at,u.name AS user_name FROM audit_logs a LEFT JOIN users u ON u.id=a.user_id ORDER BY a.created_at DESC LIMIT 500`).all()
+      : await env.DB.prepare(`SELECT a.*,u.name AS user_name,u.email AS user_email FROM audit_logs a LEFT JOIN users u ON u.id=a.user_id ORDER BY a.created_at DESC LIMIT 500`).all();
+    return json({ok:true,items:rows.results.map(x=>({...x,metadata:asJson(x.metadata_json,{}),...(user.role==='viewer'?{metadata_json:undefined,ip_address:undefined,user_email:undefined}: {})}))});
   }
 
   if(action==='users'){
@@ -705,12 +864,12 @@ async function handleAdmin(env, request, action, p) {
   if(action==='forms'){
     requireFeature(user,'forms',write);
     if(request.method==='GET'){const rows=await env.DB.prepare(`SELECT * FROM forms ORDER BY updated_at DESC`).all();return json({ok:true,items:rows.results.map(x=>({...x,fields:sanitizeFields(asJson(x.fields_json,[])),settings:sanitizeFormSettings(asJson(x.settings_json,{})),cover_url:x.cover_media_id?`/api/media/${x.cover_media_id}`:null}))});}
-    if(request.method==='POST'){const b=await readJson(request),name=cleanText(b.name,200),slug=safeSlug(b.slug||name),t=now();assert(name&&slug,400,'Tên/slug không hợp lệ.');validateFormWindow(b.opens_at||null,b.closes_at||null);const cover=await assertMediaImage(env,b.cover_media_id),fields=sanitizeFields(b.fields),settings=sanitizeFormSettings(b.settings);const r=await env.DB.prepare(`INSERT INTO forms(slug,name,description,kind,status,fields_json,settings_json,cover_media_id,opens_at,closes_at,capacity,created_by,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(slug,name,cleanText(b.description,5000),cleanText(b.kind||'general',80),FORM_STATUSES.has(b.status)?b.status:'draft',JSON.stringify(fields),JSON.stringify(settings),cover,b.opens_at||null,b.closes_at||null,b.capacity?Number(b.capacity):null,user.id,user.id,t,t).run();await audit(env,user.id,'form.create','form',r.meta.last_row_id,{slug,field_count:fields.length},request);return json({ok:true,id:r.meta.last_row_id},201);}
+    if(request.method==='POST'){const b=await readJson(request),name=cleanText(b.name,200),slug=safeSlug(b.slug||name),t=now();assert(name&&slug,400,'Tên/slug không hợp lệ.');validateFormWindow(b.opens_at||null,b.closes_at||null);const cover=await assertMediaImage(env,b.cover_media_id),fields=sanitizeFields(b.fields),settings=sanitizeFormSettings(b.settings),capacity=formCapacity(b.capacity);const r=await env.DB.prepare(`INSERT INTO forms(slug,name,description,kind,status,fields_json,settings_json,cover_media_id,opens_at,closes_at,capacity,created_by,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(slug,name,cleanText(b.description,5000),cleanText(b.kind||'general',80),FORM_STATUSES.has(b.status)?b.status:'draft',JSON.stringify(fields),JSON.stringify(settings),cover,b.opens_at||null,b.closes_at||null,capacity,user.id,user.id,t,t).run();await audit(env,user.id,'form.create','form',r.meta.last_row_id,{slug,field_count:fields.length},request);return json({ok:true,id:r.meta.last_row_id},201);}
   }
   if(action==='form'&&p[2]){
     requireFeature(user,'forms',write);const id=Number(p[2]),old=await env.DB.prepare(`SELECT * FROM forms WHERE id=?`).bind(id).first();assert(old,404,'Không tìm thấy biểu mẫu.');
     if(request.method==='GET')return json({ok:true,item:{...old,fields:sanitizeFields(asJson(old.fields_json,[])),settings:sanitizeFormSettings(asJson(old.settings_json,{})),cover_url:old.cover_media_id?`/api/media/${old.cover_media_id}`:null}});
-    if(request.method==='PUT'){const b=await readJson(request);let cover=old.cover_media_id;if(Object.prototype.hasOwnProperty.call(b,'cover_media_id'))cover=await assertMediaImage(env,b.cover_media_id);const fields=sanitizeFields(b.fields??asJson(old.fields_json,[])),settings=sanitizeFormSettings(b.settings??asJson(old.settings_json,{})),opensAt=Object.prototype.hasOwnProperty.call(b,'opens_at')?b.opens_at:old.opens_at,closesAt=Object.prototype.hasOwnProperty.call(b,'closes_at')?b.closes_at:old.closes_at;validateFormWindow(opensAt||null,closesAt||null);await env.DB.prepare(`UPDATE forms SET slug=?,name=?,description=?,kind=?,status=?,fields_json=?,settings_json=?,cover_media_id=?,opens_at=?,closes_at=?,capacity=?,updated_by=?,updated_at=? WHERE id=?`).bind(safeSlug(b.slug||old.slug),cleanText(b.name??old.name,200),cleanText(b.description??old.description,5000),cleanText(b.kind??old.kind,80),FORM_STATUSES.has(b.status)?b.status:old.status,JSON.stringify(fields),JSON.stringify(settings),cover,opensAt||null,closesAt||null,b.capacity===null?null:(b.capacity??old.capacity),user.id,now(),id).run();await audit(env,user.id,'form.update','form',id,{field_count:fields.length},request);return json({ok:true});}
+    if(request.method==='PUT'){const b=await readJson(request);let cover=old.cover_media_id;if(Object.prototype.hasOwnProperty.call(b,'cover_media_id'))cover=await assertMediaImage(env,b.cover_media_id);const fields=sanitizeFields(b.fields??asJson(old.fields_json,[])),settings=sanitizeFormSettings(b.settings??asJson(old.settings_json,{})),opensAt=Object.prototype.hasOwnProperty.call(b,'opens_at')?b.opens_at:old.opens_at,closesAt=Object.prototype.hasOwnProperty.call(b,'closes_at')?b.closes_at:old.closes_at,capacity=Object.prototype.hasOwnProperty.call(b,'capacity')?formCapacity(b.capacity):old.capacity;validateFormWindow(opensAt||null,closesAt||null);await env.DB.prepare(`UPDATE forms SET slug=?,name=?,description=?,kind=?,status=?,fields_json=?,settings_json=?,cover_media_id=?,opens_at=?,closes_at=?,capacity=?,updated_by=?,updated_at=? WHERE id=?`).bind(safeSlug(b.slug||old.slug),cleanText(b.name??old.name,200),cleanText(b.description??old.description,5000),cleanText(b.kind??old.kind,80),FORM_STATUSES.has(b.status)?b.status:old.status,JSON.stringify(fields),JSON.stringify(settings),cover,opensAt||null,closesAt||null,capacity,user.id,now(),id).run();await audit(env,user.id,'form.update','form',id,{field_count:fields.length},request);return json({ok:true});}
     if(request.method==='DELETE'){assert(ADMIN_ROLES.has(user.role),403,'Chỉ quản trị viên được xóa biểu mẫu.');const uploads=await env.DB.prepare(`SELECT r2_key FROM form_uploads WHERE form_id=?`).bind(id).all();for(const x of uploads.results||[]){try{await env.STORAGE.delete(x.r2_key)}catch{}}const c=await env.DB.prepare(`SELECT COUNT(*) c FROM form_submissions WHERE form_id=?`).bind(id).first();await env.DB.prepare(`DELETE FROM forms WHERE id=?`).bind(id).run();await audit(env,user.id,'form.delete','form',id,{deleted_submissions:Number(c.c||0),deleted_uploads:(uploads.results||[]).length},request);return json({ok:true,deleted_submissions:Number(c.c||0)});}
   }
 
@@ -729,6 +888,16 @@ async function handleAdmin(env, request, action, p) {
 
   if(action==='contacts'&&request.method==='GET'){
     assert(user.role==='root_admin'||user.role==='administrator',403,'Bạn không có quyền xem liên hệ.');const rows=await env.DB.prepare(`SELECT * FROM contact_messages ORDER BY created_at DESC LIMIT 500`).all();return json({ok:true,items:rows.results});
+  }
+  if(action==='contact'&&p[2]&&request.method==='PUT'){
+    assert(user.role==='root_admin'||user.role==='administrator',403,'Bạn không có quyền cập nhật liên hệ.');
+    const id=Number(p[2]),b=await readJson(request),status=String(b.status||'');
+    assert(Number.isSafeInteger(id)&&id>0,400,'ID liên hệ không hợp lệ.');
+    assert(['new','read','replied','closed'].includes(status),400,'Trạng thái liên hệ không hợp lệ.');
+    const old=await env.DB.prepare(`SELECT id,status FROM contact_messages WHERE id=?`).bind(id).first();assert(old,404,'Không tìm thấy liên hệ.');
+    await env.DB.prepare(`UPDATE contact_messages SET status=?,updated_at=? WHERE id=?`).bind(status,now(),id).run();
+    await audit(env,user.id,'contact.status.update','contact',id,{from:old.status,to:status},request);
+    return json({ok:true,status});
   }
   if(action==='newsletter'&&request.method==='GET'){
     assert(user.role==='root_admin'||user.role==='administrator'||user.role==='content_editor',403,'Bạn không có quyền xem newsletter.');const rows=await env.DB.prepare(`SELECT id,email,preferences_json,status,created_at,updated_at FROM newsletter_subscribers ORDER BY created_at DESC LIMIT 1000`).all();return json({ok:true,items:rows.results.map(x=>({...x,preferences:asJson(x.preferences_json,[])}))});

@@ -38,7 +38,7 @@ Quy ước: **PASS local** nghĩa là có test/kiểm tra source chạy được
 - WordPress Tổng không còn âm thầm biến lỗi tải API thành số 0 hoặc gạch ngang khó phân biệt; lỗi được nêu rõ và thống kê phân biệt trang/bài xuất bản cùng bản nháp.
 - Trung tâm CMS có liên kết đến các module hiện hữu gồm trang, bài viết, menu/footer, media, giao diện, Dấu ấn xanh, biểu mẫu và nhật ký. Không tạo CMS/WordPress hay database thứ hai.
 - Responsive Dấu ấn xanh dùng 4 cột trong dải desktop hẹp/trung bình để tránh ép bảy thẻ vào vùng quá chật; màn hình rộng vẫn dùng 7 cột, màn hình nhỏ chuyển lưới.
-- Tăng phiên bản service-worker cache lên `xanh-shell-v8`, đồng thời đổi phiên bản query của CSS/JS sang `20261011-3` để yêu cầu trình duyệt lấy tài nguyên mới sau deploy.
+- Tăng phiên bản service-worker cache lên `xanh-shell-v13`, đồng thời đổi phiên bản query của CSS/JS và accessibility script sang `20261012-1` để yêu cầu trình duyệt lấy tài nguyên mới sau deploy.
 - Bổ sung kiểm thử hồi quy cho thông báo lỗi WordPress Tổng.
 - Hướng dẫn triển khai được sửa để yêu cầu backup D1, kiểm tra migration ledger và chỉ áp dụng migration theo trạng thái thật; không được chạy lặp SQL thủ công và Wrangler trên cùng migration.
 
@@ -50,7 +50,7 @@ npm run check
 # Syntax check toàn bộ JS/MJS: chạy vòng lặp shell/Node phù hợp môi trường
 ```
 
-Các migration `0001`–`0009` đã được kiểm tra trên SQLite local sạch trong lần audit trước; việc đó **không** chứng minh schema, dữ liệu hoặc migration ledger của D1 production đang giống hệt. Không có migration production nào được chạy trong lần audit này.
+Các migration `0001`–`0010` đã được chạy tuần tự trên SQLite local sạch trong vòng kiểm thử cập nhật; việc đó **không** chứng minh schema, dữ liệu hoặc migration ledger của D1 production đang giống hệt. Không có migration production nào được chạy trong lần audit này.
 
 ## Điều kiện bắt buộc trước khi đánh dấu hoàn thành 100%
 
@@ -62,3 +62,24 @@ Các migration `0001`–`0009` đã được kiểm tra trên SQLite local sạc
 6. Smoke-test đăng nhập và ít nhất các vai trò bị giới hạn, upload/đọc lại media R2, biểu mẫu, SEO/sitemap/deep-link và tích hợp ngoài đang bật.
 
 **Không được coi ZIP, CSS, migrations local hoặc unit tests là bằng chứng website production đã được cập nhật.**
+
+
+## Bản nâng cấp mã nguồn ngày 12/10/2026 — chưa triển khai production
+
+### Đã thực hiện trên bản sao
+- Sửa migration `0009` để không thêm trùng `manual_value`; bổ sung migration `0010_lifecycle_accessibility.sql`.
+- Chuẩn hóa font Be Vietnam Pro, bổ sung công cụ A− / A / A+ với lưu tùy chọn và cập nhật nội dung động/modal, đồng thời tinh chỉnh hệ màu xanh rừng trên toàn website.
+- Siết luồng reset mật khẩu, chống thao tác newsletter thay đổi trạng thái qua GET, xác thực nguồn gốc POST xác nhận, và hiển thị đúng tình trạng gửi email newsletter.
+- Chặn SVG upload chủ động, thêm bảo vệ khi phục vụ SVG cũ, tách quyền media công khai/riêng tư và tránh để R2 object mồ côi khi ghi metadata D1 thất bại.
+- Bổ sung thời hạn 24 giờ cho upload biểu mẫu chưa gửi hồ sơ, dọn dẹp theo lượt truy cập và kiểm tra thời hạn token trước khi nhận hồ sơ.
+- Ràng buộc xác minh Dấu ấn xanh theo người ghi nhận khác, kiểm tra loại hoạt động, và không cho sửa số liệu ngay trong thao tác xác minh.
+- Siết quyền audit metadata, sửa đường dẫn sitemap/CTT tracking, thêm cập nhật trạng thái CRM và cải thiện tính nhất quán khi kiểm tra sức chứa biểu mẫu.
+
+### Kiểm thử cục bộ tại thời điểm cập nhật
+- `npm test`: 70/70 đạt.
+- `npm run check`: đạt, 79 tệp được quét.
+- Kiểm tra cú pháp JS/MJS cho API, auth, sitemap, app và accessibility: đạt.
+- Toàn bộ migration `0001`–`0010`: chạy tuần tự thành công trên SQLite sạch, gồm kiểm tra schema sau migration.
+
+### Chưa được xác minh
+Chưa deploy hoặc chạy smoke test trên Cloudflare Pages/D1/R2 production; chưa xác minh secrets, mail provider, custom domain, tích hợp CTT và cache thực tế. Chưa hoàn tất kiểm tra hình ảnh bằng trình duyệt desktop/mobile thật. Chỉ đánh dấu production-ready sau khi hoàn tất checklist triển khai ở `DEPLOYMENT_STEPS.md`.

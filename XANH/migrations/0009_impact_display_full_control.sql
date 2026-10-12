@@ -3,7 +3,6 @@
 ALTER TABLE impact_counter_config ADD COLUMN unit TEXT NOT NULL DEFAULT '';
 ALTER TABLE impact_counter_config ADD COLUMN icon TEXT NOT NULL DEFAULT 'users';
 ALTER TABLE impact_counter_config ADD COLUMN data_source TEXT NOT NULL DEFAULT 'd1';
-ALTER TABLE impact_counter_config ADD COLUMN manual_value REAL;
 ALTER TABLE impact_counter_config ADD COLUMN decimal_places INTEGER NOT NULL DEFAULT 0;
 
 UPDATE impact_counter_config SET

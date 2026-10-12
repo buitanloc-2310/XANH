@@ -11,7 +11,9 @@ test('Dấu ấn xanh has exactly the seven approved configurable metrics and ke
   assert.match(sql,/unit TEXT NOT NULL DEFAULT/);
   assert.match(sql,/icon TEXT NOT NULL DEFAULT/);
   assert.match(sql,/data_source TEXT NOT NULL DEFAULT/);
-  assert.match(sql,/manual_value REAL/);
+  const priorAppearance=await read('migrations/0007_appearance_ctt_case_sync.sql');
+  assert.match(priorAppearance,/ALTER TABLE impact_counter_config ADD COLUMN manual_value REAL/);
+  assert.doesNotMatch(sql,/ADD COLUMN manual_value REAL/);
   assert.match(sql,/decimal_places INTEGER/);
   assert.match(sql,/SET enabled=0, sort_order=99[\s\S]*?WHERE metric_key='community_reached'/);
   assert.match(sql,/Existing non-empty CMS copy is preserved/);

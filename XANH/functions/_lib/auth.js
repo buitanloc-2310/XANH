@@ -11,6 +11,7 @@ export async function createSession(env, user, request) {
   const expires = new Date(now.getTime() + SESSION_DAYS * 86400000);
   const ua = (request.headers.get('User-Agent') || '').slice(0, 500);
   const ip = (request.headers.get('CF-Connecting-IP') || '').slice(0, 100);
+  await env.DB.prepare(`DELETE FROM sessions WHERE expires_at<=? OR user_id IN (SELECT id FROM users WHERE status<>'active')`).bind(now.toISOString()).run();
   await env.DB.prepare(`INSERT INTO sessions (user_id, token_hash, expires_at, user_agent, ip_address, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
     .bind(user.id, tokenHash, expires.toISOString(), ua, ip, now.toISOString()).run();
   return { token, expires };

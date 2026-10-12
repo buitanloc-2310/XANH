@@ -18,7 +18,7 @@ npx wrangler d1 export xanh --remote --output=./backups/xanh-before-rebuild.sql
 npx wrangler d1 migrations list xanh --remote
 ```
 
-Xác minh thủ công danh sách migration đã áp dụng trong Cloudflare khớp với `migrations/0001_initial.sql` đến `migrations/0009_impact_display_full_control.sql` và schema thật của DB. Nếu ledger không có, bị lệch, hoặc có migration từng chạy bằng SQL Console không được ghi nhận, **dừng lại** và đối chiếu schema/database trước khi tiếp tục. Không chạy lại migration đã áp dụng.
+Xác minh thủ công danh sách migration đã áp dụng trong Cloudflare khớp với `migrations/0001_initial.sql` đến `migrations/0010_lifecycle_accessibility.sql` và schema thật của DB. Nếu ledger không có, bị lệch, hoặc có migration từng chạy bằng SQL Console không được ghi nhận, **dừng lại** và đối chiếu schema/database trước khi tiếp tục. Không chạy lại migration đã áp dụng.
 
 ## 3. Áp dụng migration nếu và chỉ nếu cần
 
@@ -66,3 +66,12 @@ Sau khi deploy, xác minh deployment/commit thực tế trên Cloudflare Dashboa
 ## 7. Trạng thái nghiệm thu
 
 Xem `FINAL_ACCEPTANCE.md` và `FINAL_AUDIT_20261011.md`. Không tuyên bố đạt 100% production trước khi hoàn thành toàn bộ smoke test yêu cầu Cloudflare và kiểm tra trực quan trên trình duyệt thật.
+
+
+## Bản cập nhật mã nguồn 2026-10-12 (chưa deploy)
+
+- Thêm migration `0010_lifecycle_accessibility.sql` cho thời hạn upload biểu mẫu, phân loại media công khai/riêng tư, người ghi nhận Dấu ấn xanh, và các index vòng đời dữ liệu.
+- Sửa lỗi trùng `manual_value` ở migration `0009`; không chỉnh sửa dữ liệu hay migration ledger trên production.
+- Trước khi apply, phải backup D1, kiểm tra `wrangler d1 migrations list xanh --remote`, rà soát migration history thực tế và thử trên staging. Nếu migration ledger/schema có dấu hiệu lệch, dừng để đối chiếu trước khi chạy Wrangler.
+- Sau migration, triển khai bản code và chạy toàn bộ smoke test tại mục 6. Không coi kết quả local là bằng chứng deployment đã chạy thành công.
+- Giao diện được chuẩn hóa Be Vietnam Pro và thêm nút A− / A / A+; kiểm tra trực quan ở trình duyệt thật, desktop/mobile, trước khi nghiệm thu.

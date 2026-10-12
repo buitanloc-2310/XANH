@@ -3,8 +3,8 @@ import { resolve, relative } from 'node:path';
 const root = resolve(new URL('..', import.meta.url).pathname);
 const mustExist = [
   'functions/api/[[path]].js','functions/sitemap.xml.js','functions/_lib/crypto.js','functions/_lib/auth.js','functions/_lib/media.js',
-  'migrations/0001_initial.sql','migrations/0002_people_forms.sql','migrations/0003_production_hardening.sql','migrations/0004_seed_hanoi_volunteer_form.sql','migrations/0005_form_builder_single_source.sql','migrations/0006_navigation_impact_content.sql','migrations/0007_ctt_integration_outbox.sql','migrations/0008_content_editorial_refresh.sql','migrations/0009_impact_display_full_control.sql',
-  'public/index.html','public/app.js','public/ui-safety.js','public/styles.css','public/sw.js','public/assets/xanh-sky-first-logo.png','public/assets/dau-an-xanh-landscape.webp',
+  'migrations/0001_initial.sql','migrations/0002_people_forms.sql','migrations/0003_production_hardening.sql','migrations/0004_seed_hanoi_volunteer_form.sql','migrations/0005_form_builder_single_source.sql','migrations/0006_navigation_impact_content.sql','migrations/0007_appearance_ctt_case_sync.sql','migrations/0007_ctt_integration_outbox.sql','migrations/0008_content_editorial_refresh.sql','migrations/0009_impact_display_full_control.sql','migrations/0010_lifecycle_accessibility.sql',
+  'public/index.html','public/app.js','public/accessibility.js','public/ui-safety.js','public/styles.css','public/sw.js','public/assets/xanh-sky-first-logo.png','public/assets/dau-an-xanh-landscape.webp',
   'package.json','wrangler.jsonc','README.md','SECURITY.md','FINAL_ACCEPTANCE.md'
 ];
 let failed = false;
@@ -35,5 +35,16 @@ for(const bad of ['href="#gioi-thieu"','href="#tham-gia"','Coming soon']){
 const api = await readFile(resolve(root,'functions/api/[[path]].js'),'utf8');
 if(api.includes('env.MAIL_FROM')){console.error('Legacy MAIL_FROM fallback still present');failed=true;}
 if(!api.includes('photo_media_id')||!app.includes('Chọn từ Media Library')||!app.includes('Tải ảnh từ máy')){console.error('People upload-first flow missing');failed=true;}
+const migration009 = await readFile(resolve(root,'migrations/0009_impact_display_full_control.sql'),'utf8');
+if (/ADD COLUMN\s+manual_value/i.test(migration009)) { console.error('Duplicate manual_value migration remains in 0009'); failed = true; }
+const migration010 = await readFile(resolve(root,'migrations/0010_lifecycle_accessibility.sql'),'utf8');
+for (const field of ['ADD COLUMN expires_at','ADD COLUMN recorded_by','ADD COLUMN visibility']) {
+  if (!migration010.includes(field)) { console.error(`Lifecycle migration missing: ${field}`); failed = true; }
+}
+const indexHtml = await readFile(resolve(root,'public/index.html'),'utf8');
+const scaler = await readFile(resolve(root,'public/accessibility.js'),'utf8');
+if (!/Be\+Vietnam\+Pro/.test(indexHtml) || !indexHtml.includes('data-font-step="-1"') || !indexHtml.includes('data-font-step="1"') || !scaler.includes('restoreOriginalFontSizes')) {
+  console.error('Site-wide Be Vietnam Pro/font-size accessibility controls are incomplete'); failed = true;
+}
 if (failed) process.exit(1);
 console.log(`Production verification passed (${all.length} files scanned).`);

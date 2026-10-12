@@ -1,7 +1,7 @@
 import { HttpError } from './http.js';
 
 const ALLOWED = new Map([
-  ['image/jpeg', ['jpg','jpeg']], ['image/png',['png']], ['image/webp',['webp']], ['image/avif',['avif']], ['image/gif',['gif']], ['image/svg+xml',['svg']],
+  ['image/jpeg', ['jpg','jpeg']], ['image/png',['png']], ['image/webp',['webp']], ['image/avif',['avif']], ['image/gif',['gif']],
   ['application/pdf',['pdf']], ['text/plain',['txt']], ['text/csv',['csv']],
   ['application/vnd.openxmlformats-officedocument.wordprocessingml.document',['docx']],
   ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',['xlsx']],
@@ -24,11 +24,6 @@ function signatureLooksValid(mime, bytes) {
   return true;
 }
 
-function sanitizeSvgText(text) {
-  const lower = text.toLowerCase();
-  if (/<script\b|on\w+\s*=|javascript:|<foreignobject\b/.test(lower)) throw new HttpError(400, 'SVG chứa nội dung không an toàn.');
-  return text.replace(/<\?xml[\s\S]*?\?>/gi, '').trim();
-}
 
 export async function validateUpload(file) {
   if (!(file instanceof File)) throw new HttpError(400, 'Không tìm thấy file tải lên.');
@@ -40,9 +35,7 @@ export async function validateUpload(file) {
   if (!allowedExts.includes(ext)) throw new HttpError(415, 'Phần mở rộng file không khớp định dạng.');
   const buf = new Uint8Array(await file.arrayBuffer());
   if (!signatureLooksValid(mime, buf)) throw new HttpError(415, 'Chữ ký file không khớp định dạng khai báo.');
-  let body = buf;
-  if (mime === 'image/svg+xml') body = new TextEncoder().encode(sanitizeSvgText(new TextDecoder().decode(buf)));
-  return { body, mime, ext, size: body.byteLength };
+  return { body: buf, mime, ext, size: buf.byteLength };
 }
 
 export function mediaKey(id, ext) {

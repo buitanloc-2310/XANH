@@ -78,6 +78,58 @@ function mockD1({ legacySettingsSchema = false } = {}) {
   };
 }
 
+test('Admin settings GET recovers only when site_settings table is missing', async () => {
+  let tableExists = false;
+  const values = new Map();
+  const statements = [];
+  const DB = {
+    prepare(sql) {
+      return {
+        async run() {
+          statements.push({ sql, args: [] });
+          if (/CREATE TABLE IF NOT EXISTS site_settings/i.test(sql)) tableExists = true;
+          return { meta: { changes: 1 } };
+        },
+        async all() {
+          if (/SELECT key,value_json FROM site_settings ORDER BY key/i.test(sql)) {
+            if (!tableExists) throw new Error('no such table: site_settings');
+            return { results: [...values.entries()].map(([key, value_json]) => ({ key, value_json })) };
+          }
+          return { results: [] };
+        },
+        bind(...args) {
+          return {
+            async first() {
+              if (/FROM sessions s JOIN users u/i.test(sql)) return { id: 1, name: 'Root', email: 'root@example.invalid', role: 'root_admin', status: 'active', session_id: 1, expires_at: '2099-01-01T00:00:00.000Z' };
+              if (/SELECT value_json FROM site_settings WHERE key=\?/i.test(sql)) {
+                if (!tableExists) throw new Error('no such table: site_settings');
+                return values.has(args[0]) ? { value_json: values.get(args[0]) } : null;
+              }
+              return null;
+            },
+            async run() {
+              statements.push({ sql, args });
+              if (/^INSERT OR IGNORE INTO site_settings/i.test(sql)) {
+                if (!tableExists) throw new Error('no such table: site_settings');
+                if (!values.has(args[0])) values.set(args[0], args[1]);
+              }
+              return { meta: { changes: 1 } };
+            },
+          };
+        },
+      };
+    },
+  };
+  const request = new Request('https://www.xanh.skyfirst.io.vn/api/admin/settings', { headers: { Cookie: 'xanh_session=valid-token' } });
+  const response = await onRequest({ request, env: { DB } });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.groups.general.site_name, 'Xanh Sky First');
+  assert.ok(statements.some(x => /CREATE TABLE IF NOT EXISTS site_settings/i.test(x.sql)));
+  assert.ok(statements.some(x => /INSERT OR IGNORE INTO site_settings/i.test(x.sql)));
+});
+
 test('Admin settings GET succeeds when the table has no unused updated_at column', async () => {
   const DB = mockD1({ legacySettingsSchema: true });
   const request = new Request('https://www.xanh.skyfirst.io.vn/api/admin/settings', {
@@ -111,9 +163,9 @@ test('Management assets are cache-busted so /admin/settings does not load a stal
   const html = await read('public/index.html');
   const sw = await read('public/sw.js');
   const headers = await read('public/_headers');
-  assert.match(html, /app\.js\?v=20261012-3/);
-  assert.match(sw, /xanh-shell-v15/);
-  assert.match(sw, /app\.js\?v=20261012-3/);
+  assert.match(html, /app\.js\?v=20261012-4/);
+  assert.match(sw, /xanh-shell-v16/);
+  assert.match(sw, /app\.js\?v=20261012-4/);
   assert.match(headers, /\/app\.js\n\s+Cache-Control: no-store, no-cache, must-revalidate/);
   assert.match(headers, /\/sw\.js\n\s+Cache-Control: no-store, no-cache, must-revalidate/);
 });

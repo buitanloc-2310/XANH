@@ -53,9 +53,53 @@ async function rateLimit(env, request, bucket, limit, seconds) {
   if ((row?.hits || 0) > limit) throw new HttpError(429, 'Bạn thao tác quá nhanh. Vui lòng thử lại sau.');
 }
 
+const DEFAULT_GENERAL_SETTINGS = {
+  site_name: 'Xanh Sky First',
+  site_url: 'https://xanh.skyfirst.io.vn',
+  tagline: 'Hành động hôm nay. Xanh ngày mai.',
+  email_main: 'xanh@skyfirst.io.vn',
+  email_support: 'support@skyfirst.io.vn',
+  email_partnership: 'hoptac@skyfirst.io.vn',
+  email_media: 'truyenthong@skyfirst.io.vn',
+  hotline: '0924 910 210',
+  logo_url: '/assets/xanh-sky-first-logo.png',
+  theme_primary: '#23794f',
+  theme_green: '#329b65',
+  theme_navy: '#173b2d',
+};
+
+async function recoverMissingSiteSettingsTable(env, error) {
+  const message = String(error?.message || error);
+  // Only repair the exact missing-table case. Do not conceal permission, binding,
+  // malformed-schema, or general D1 failures as successful recovery.
+  if (!/no such table:\s*site_settings/i.test(message)) throw error;
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS site_settings (
+    key TEXT PRIMARY KEY,
+    value_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`).run();
+  await env.DB.prepare(`INSERT OR IGNORE INTO site_settings(key,value_json,updated_at) VALUES(?,?,?)`)
+    .bind('general', JSON.stringify(DEFAULT_GENERAL_SETTINGS), now()).run();
+}
+
+async function settingsRows(env) {
+  try {
+    return await env.DB.prepare(`SELECT key,value_json FROM site_settings ORDER BY key`).all();
+  } catch (error) {
+    await recoverMissingSiteSettingsTable(env, error);
+    return await env.DB.prepare(`SELECT key,value_json FROM site_settings ORDER BY key`).all();
+  }
+}
+
 async function settingsGet(env, key='general') {
-  const row = await env.DB.prepare(`SELECT value_json FROM site_settings WHERE key=?`).bind(key).first();
-  return asJson(row?.value_json, {});
+  try {
+    const row = await env.DB.prepare(`SELECT value_json FROM site_settings WHERE key=?`).bind(key).first();
+    return asJson(row?.value_json, {});
+  } catch (error) {
+    await recoverMissingSiteSettingsTable(env, error);
+    const row = await env.DB.prepare(`SELECT value_json FROM site_settings WHERE key=?`).bind(key).first();
+    return asJson(row?.value_json, {});
+  }
 }
 async function settingsSet(env, key, value) {
   const serialized = JSON.stringify(value || {});
@@ -801,7 +845,7 @@ async function handleAdmin(env, request, action, p) {
 
   if(action==='settings'){
     requireFeature(user,'pages',write);
-    if(request.method==='GET'){const rows=await env.DB.prepare(`SELECT key,value_json FROM site_settings ORDER BY key`).all();return json({ok:true,groups:Object.fromEntries(rows.results.map(x=>[x.key,asJson(x.value_json,{})]))});}
+    if(request.method==='GET'){const rows=await settingsRows(env);return json({ok:true,groups:Object.fromEntries(rows.results.map(x=>[x.key,asJson(x.value_json,{})]))});}
     if(request.method==='PUT'){assert(ADMIN_ROLES.has(user.role),403,'Chỉ quản trị viên được thay đổi cài đặt.');const b=await readJson(request),key=cleanText(b.key||'general',50);assert(['general','footer','media','impact','security','cms'].includes(key),400,'Nhóm cài đặt không hợp lệ.');const current=await settingsGet(env,key),next={...current,...(b.value||{})};if(key==='security') next.pbkdf2_iterations=PBKDF2_ITERATIONS;await settingsSet(env,key,next);await audit(env,user.id,'settings.update','system',key,{keys:Object.keys(b.value||{})},request);return json({ok:true,key,value:next});}
   }
 

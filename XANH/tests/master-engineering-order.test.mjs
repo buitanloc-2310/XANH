@@ -105,9 +105,9 @@ test('Design System enforces Be Vietnam Pro and persists a Media-controlled favi
  assert.match(app,/safeSettings\.site_favicon_url/);
  assert.match(app,/id="nav-logo-pick"/);
  assert.match(app,/onSelect:item=>\{navForm\.elements\.logo_url\.value=item\.url/);
- assert.match(html,/app\.js\?v=20261012-3/);
+ assert.match(html,/app\.js\?v=20261012-4/);
  assert.match(app,/Be Vietnam Pro · Bắt buộc toàn hệ thống/);
- const sw=await get('public/sw.js');assert.match(sw,/const CACHE='xanh-shell-v15'/);
+ const sw=await get('public/sw.js');assert.match(sw,/const CACHE='xanh-shell-v16'/);
 });
 
 

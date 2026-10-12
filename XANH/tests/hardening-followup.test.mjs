@@ -66,7 +66,7 @@ test('Impact verification requires an independent verifier and does not change m
 
 test('Service worker uses the current versioned typography and static assets', async () => {
   const worker = await read('public/sw.js');
-  assert.match(worker, /xanh-shell-v15/);
+  assert.match(worker, /xanh-shell-v16/);
   assert.match(worker, /accessibility\.js\?v=20261012-1/);
   assert.match(worker, /styles\.css\?v=20261012-2/);
 });

@@ -41,11 +41,18 @@ export function errorResponse(error) {
   return json({ ok: false, error: 'Đã xảy ra lỗi hệ thống.' }, 500);
 }
 
+function decodeCookieValue(value) {
+  // Cookie headers may contain values written by other applications that are not
+  // percent-encoded correctly. A malformed unrelated cookie must not make
+  // /api/auth/me fail with HTTP 500 before the Xanh session can be checked.
+  try { return decodeURIComponent(value); } catch { return value; }
+}
+
 export function parseCookies(request) {
   const header = request.headers.get('Cookie') || '';
   return Object.fromEntries(header.split(';').map((part) => part.trim()).filter(Boolean).map((part) => {
     const index = part.indexOf('=');
-    return index < 0 ? [part, ''] : [part.slice(0, index), decodeURIComponent(part.slice(index + 1))];
+    return index < 0 ? [part, ''] : [part.slice(0, index), decodeCookieValue(part.slice(index + 1))];
   }));
 }
 

@@ -47,4 +47,5 @@ if (!/Be\+Vietnam\+Pro/.test(indexHtml) || !indexHtml.includes('data-font-step="
   console.error('Site-wide Be Vietnam Pro/font-size accessibility controls are incomplete'); failed = true;
 }
 if (failed) process.exit(1);
-console.log(`Production verification passed (${all.length} files scanned).`);
+console.log(`Static source integrity checks passed (${all.length} files scanned).`);
+console.log('Note: this script does not connect to Cloudflare production or execute D1 migrations.');

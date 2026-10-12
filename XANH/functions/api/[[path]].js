@@ -58,7 +58,17 @@ async function settingsGet(env, key='general') {
   return asJson(row?.value_json, {});
 }
 async function settingsSet(env, key, value) {
-  await env.DB.prepare(`INSERT INTO site_settings(key,value_json,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at`).bind(key, JSON.stringify(value || {}), now()).run();
+  const serialized = JSON.stringify(value || {});
+  try {
+    await env.DB.prepare(`INSERT INTO site_settings(key,value_json,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at`).bind(key, serialized, now()).run();
+  } catch (error) {
+    // Some pre-existing D1 databases may have been created before updated_at
+    // was added to site_settings. Support that legacy shape without swallowing
+    // unrelated database errors or requiring a destructive rebuild.
+    const message = String(error?.message || error);
+    if (!/no such column: updated_at|has no column named updated_at/i.test(message)) throw error;
+    await env.DB.prepare(`INSERT INTO site_settings(key,value_json) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json`).bind(key, serialized).run();
+  }
 }
 
 async function signCttPayload(secret, timestamp, nonce, raw) {
@@ -791,7 +801,7 @@ async function handleAdmin(env, request, action, p) {
 
   if(action==='settings'){
     requireFeature(user,'pages',write);
-    if(request.method==='GET'){const rows=await env.DB.prepare(`SELECT key,value_json,updated_at FROM site_settings ORDER BY key`).all();return json({ok:true,groups:Object.fromEntries(rows.results.map(x=>[x.key,asJson(x.value_json,{})]))});}
+    if(request.method==='GET'){const rows=await env.DB.prepare(`SELECT key,value_json FROM site_settings ORDER BY key`).all();return json({ok:true,groups:Object.fromEntries(rows.results.map(x=>[x.key,asJson(x.value_json,{})]))});}
     if(request.method==='PUT'){assert(ADMIN_ROLES.has(user.role),403,'Chỉ quản trị viên được thay đổi cài đặt.');const b=await readJson(request),key=cleanText(b.key||'general',50);assert(['general','footer','media','impact','security','cms'].includes(key),400,'Nhóm cài đặt không hợp lệ.');const current=await settingsGet(env,key),next={...current,...(b.value||{})};if(key==='security') next.pbkdf2_iterations=PBKDF2_ITERATIONS;await settingsSet(env,key,next);await audit(env,user.id,'settings.update','system',key,{keys:Object.keys(b.value||{})},request);return json({ok:true,key,value:next});}
   }
 

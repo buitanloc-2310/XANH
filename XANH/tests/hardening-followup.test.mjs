@@ -52,7 +52,8 @@ test('Newsletter signup reports email delivery failure honestly', async () => {
 test('The runtime theme defaults to forest green while admin controls retain Be Vietnam Pro', async () => {
   const app = await read('public/app.js');
   assert.match(app, /setColor\('theme_primary','--blue','#23794f'\)/);
-  assert.match(app, /--site-font-family',fonts\.be-vietnam-pro/);
+  assert.match(app, /--site-font-family',fonts\[['"]be-vietnam-pro['"]\]/);
+  assert.doesNotMatch(app, /fonts\.be-vietnam-pro/);
   assert.match(app, /theme_font_family:'be-vietnam-pro'/);
 });
 
@@ -65,7 +66,7 @@ test('Impact verification requires an independent verifier and does not change m
 
 test('Service worker uses the current versioned typography and static assets', async () => {
   const worker = await read('public/sw.js');
-  assert.match(worker, /xanh-shell-v13/);
+  assert.match(worker, /xanh-shell-v14/);
   assert.match(worker, /accessibility\.js\?v=20261012-1/);
   assert.match(worker, /styles\.css\?v=20261012-1/);
 });

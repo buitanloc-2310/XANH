@@ -30,8 +30,8 @@ function applySiteTheme(settings={},path=location.pathname){
   root.style.setProperty('--site-button-radius',number(values.theme_button_radius,0,999,999)+'px');root.style.setProperty('--site-section-space',number(values.theme_section_space,24,160,100)+'px');root.style.setProperty('--site-shadow-strength',String(number(values.theme_shadow_strength,0,.25,.08)));root.style.setProperty('--site-hero-overlay',String(number(values.theme_hero_overlay,0,1,.82)));
   // Be Vietnam Pro is the required system-wide typeface; legacy saved font values are normalized.
   const fonts={'system':'"Be Vietnam Pro",system-ui,-apple-system,"Segoe UI",sans-serif','be-vietnam-pro':'"Be Vietnam Pro",system-ui,-apple-system,"Segoe UI",sans-serif','inter':'"Be Vietnam Pro",system-ui,-apple-system,"Segoe UI",sans-serif','arial':'"Be Vietnam Pro",system-ui,-apple-system,"Segoe UI",sans-serif'};
-  root.style.setProperty('--site-font-family',fonts.be-vietnam-pro);
-  root.style.setProperty('--site-heading-font-family',fonts.be-vietnam-pro);
+  root.style.setProperty('--site-font-family',fonts['be-vietnam-pro']);
+  root.style.setProperty('--site-heading-font-family',fonts['be-vietnam-pro']);
   const favicon=document.querySelector('link[rel~=\"icon\"]');if(favicon)favicon.href=safeImageSrc(safeSettings.site_favicon_url,'/assets/xanh-sky-first-logo.png');
   const safeImage=(value,fallback)=>{const v=String(value||'').trim();return /^\/(assets\/[a-zA-Z0-9/_ .-]+|api\/media\/[0-9]+)$/.test(v)&&!v.includes('..')&&!/["'()\\]/.test(v)?`url("${v}")`:fallback};
   root.style.setProperty('--projects-visual',safeImage(values.theme_projects_image,'none'));root.style.setProperty('--activities-visual',safeImage(values.theme_activities_image,'none'));root.style.setProperty('--impact-visual',safeImage(values.theme_impact_image,'url("/assets/dau-an-xanh-landscape.webp")'));root.style.setProperty('--action-visual',safeImage(values.theme_action_image,'none'));root.style.setProperty('--footer-visual',safeImage(values.theme_footer_image,'none'));

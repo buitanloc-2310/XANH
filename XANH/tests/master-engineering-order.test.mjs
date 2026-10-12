@@ -98,15 +98,16 @@ test('Design System enforces Be Vietnam Pro and persists a Media-controlled favi
  assert.match(app,/name="theme_heading_font_family"/);
  assert.match(app,/--site-heading-font-family/);
  assert.match(css,/body,body \*\{font-family:"Be Vietnam Pro"/);
- assert.match(app,/fonts\.be-vietnam-pro/);
+ assert.match(app,/fonts\[['"]be-vietnam-pro['"]\]/);
+ assert.doesNotMatch(app,/fonts\.be-vietnam-pro/);
  assert.match(app,/name="site_favicon_url"/);
  assert.match(app,/data-theme-media="site_favicon_url"/);
  assert.match(app,/safeSettings\.site_favicon_url/);
  assert.match(app,/id="nav-logo-pick"/);
  assert.match(app,/onSelect:item=>\{navForm\.elements\.logo_url\.value=item\.url/);
- assert.match(html,/app\.js\?v=20261012-1/);
+ assert.match(html,/app\.js\?v=20261012-2/);
  assert.match(app,/Be Vietnam Pro · Bắt buộc toàn hệ thống/);
- const sw=await get('public/sw.js');assert.match(sw,/const CACHE='xanh-shell-v13'/);
+ const sw=await get('public/sw.js');assert.match(sw,/const CACHE='xanh-shell-v14'/);
 });
 
 

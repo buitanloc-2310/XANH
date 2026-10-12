@@ -106,3 +106,89 @@ test('Admin settings PUT retries without updated_at only for the legacy missing-
   assert.ok(DB.calls.some(call => /^INSERT INTO site_settings\(key,value_json,updated_at\)/i.test(call.sql)));
   assert.ok(DB.calls.some(call => /^INSERT INTO site_settings\(key,value_json\) VALUES\(\?,\?\)/i.test(call.sql)));
 });
+
+test('Management assets are cache-busted so /admin/settings does not load a stale public router', async () => {
+  const html = await read('public/index.html');
+  const sw = await read('public/sw.js');
+  const headers = await read('public/_headers');
+  assert.match(html, /app\.js\?v=20261012-3/);
+  assert.match(sw, /xanh-shell-v15/);
+  assert.match(sw, /app\.js\?v=20261012-3/);
+  assert.match(headers, /\/app\.js\n\s+Cache-Control: no-store, no-cache, must-revalidate/);
+  assert.match(headers, /\/sw\.js\n\s+Cache-Control: no-store, no-cache, must-revalidate/);
+});
+
+test('CTT Admin stays available when modern outbox is missing and falls back to legacy queue', async () => {
+  const DB = {
+    prepare(sql) {
+      return {
+        bind(...args) {
+          return {
+            async first() {
+              if (/FROM sessions s JOIN users u/i.test(sql)) return { id: 1, name: 'Root', email: 'root@example.invalid', role: 'root_admin', status: 'active', session_id: 1, expires_at: '2099-01-01T00:00:00.000Z' };
+              return null;
+            },
+            async all() { return { results: [] }; },
+            async run() { return { meta: { changes: 1 } }; },
+          };
+        },
+        async all() {
+          if (/FROM ctt_integration_outbox/i.test(sql)) throw new Error('no such table: ctt_integration_outbox');
+          if (/FROM ctt_sync_queue q/i.test(sql)) return { results: [{ submission_code: 'XSF-LEGACY', state: 'failed', attempts: 1, last_http_status: null, last_error: 'timeout', created_at: '2026-01-01', updated_at: '2026-01-02', sent_at: null }] };
+          return { results: [] };
+        },
+      };
+    },
+  };
+  const request = new Request('https://www.xanh.skyfirst.io.vn/api/admin/ctt-integration', { headers: { Cookie: 'xanh_session=valid-token' } });
+  const response = await onRequest({ request, env: { DB } });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.source, 'legacy_queue');
+  assert.equal(body.items[0].submission_code, 'XSF-LEGACY');
+  assert.match(body.warning, /0011_admin_500_recovery\.sql/);
+});
+
+test('CTT Admin returns a visible setup warning instead of HTTP 500 when both known queues are absent', async () => {
+  const DB = {
+    prepare(sql) {
+      return {
+        bind(...args) { return { async first() { if (/FROM sessions s JOIN users u/i.test(sql)) return { id: 1, name: 'Root', email: 'root@example.invalid', role: 'root_admin', status: 'active', session_id: 1, expires_at: '2099-01-01T00:00:00.000Z' }; return null; } }; },
+        async all() {
+          if (/FROM ctt_integration_outbox/i.test(sql)) throw new Error('no such table: ctt_integration_outbox');
+          if (/FROM ctt_sync_queue q/i.test(sql)) throw new Error('no such table: ctt_sync_queue');
+          return { results: [] };
+        },
+      };
+    },
+  };
+  const request = new Request('https://www.xanh.skyfirst.io.vn/api/admin/ctt-integration', { headers: { Cookie: 'xanh_session=valid-token' } });
+  const response = await onRequest({ request, env: { DB } });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.source, 'uninitialized');
+  assert.deepEqual(body.items, []);
+  assert.match(body.warning, /0011_admin_500_recovery\.sql/);
+});
+
+test('CTT Admin preserves legacy history alongside a newly initialized outbox', async () => {
+  const DB = {
+    prepare(sql) {
+      return {
+        bind(...args) { return { async first() { if (/FROM sessions s JOIN users u/i.test(sql)) return { id: 1, name: 'Root', email: 'root@example.invalid', role: 'root_admin', status: 'active', session_id: 1, expires_at: '2099-01-01T00:00:00.000Z' }; return null; } }; },
+        async all() {
+          if (/FROM ctt_integration_outbox/i.test(sql)) return { results: [{ submission_code: 'XSF-CURRENT', state: 'pending', attempts: 0, last_http_status: null, last_error: '', created_at: '2026-10-12', updated_at: '2026-10-12', sent_at: null }] };
+          if (/FROM ctt_sync_queue q/i.test(sql)) return { results: [{ submission_code: 'XSF-OLD', state: 'failed', attempts: 2, last_http_status: null, last_error: 'legacy', created_at: '2026-10-10', updated_at: '2026-10-11', sent_at: null }] };
+          return { results: [] };
+        },
+      };
+    },
+  };
+  const request = new Request('https://www.xanh.skyfirst.io.vn/api/admin/ctt-integration', { headers: { Cookie: 'xanh_session=valid-token' } });
+  const response = await onRequest({ request, env: { DB } });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.source, 'combined');
+  assert.deepEqual(body.items.map(x => x.submission_code).sort(), ['XSF-CURRENT', 'XSF-OLD']);
+  assert.ok(body.items.find(x => x.submission_code === 'XSF-OLD')._source === 'legacy_queue');
+});

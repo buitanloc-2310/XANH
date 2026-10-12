@@ -522,6 +522,7 @@ async function newsletterAdmin(){const x=(await api('/api/admin/newsletter')).it
 async function cttAdmin(){
   const d=await api('/api/admin/ctt-integration'),items=d.items||[];
   const stateLabel={pending:'Chờ gửi',sent:'Đã gửi',failed:'Gửi thất bại',not_configured:'Chưa cấu hình'};
+  const currentOutbox=d.source==='outbox'||d.source==='combined';
   const rows=items.map(x=>[
     `<b>${esc(x.submission_code)}</b>`,
     statusBadge(stateLabel[x.state]?x.state:'unknown'),
@@ -530,9 +531,11 @@ async function cttAdmin(){
     esc(x.last_error||'—'),
     date(x.updated_at),
     x.sent_at?date(x.sent_at):'—',
-    x.state==='sent'?'—':`<button type="button" class="link-btn retry-ctt" data-code="${esc(x.submission_code)}">Gửi lại</button>`
+    x.state==='sent'||!currentOutbox||x._source==='legacy_queue'?'—':`<button type="button" class="link-btn retry-ctt" data-code="${esc(x.submission_code)}">Gửi lại</button>`
   ]);
-  return adminHead('Đồng bộ CTT','Theo dõi trạng thái gửi mã hồ sơ tối thiểu từ Xanh sang cổng CTT. Chỉ gửi lại khi đã kiểm tra nguyên nhân thất bại.',`<button type="button" class="btn glass" id="refresh-ctt">Làm mới</button>`)+`<div class="inline-status info"><b>Lưu ý dữ liệu:</b> Màn hình này hiển thị trạng thái outbox và lỗi phản hồi. Không gửi câu trả lời biểu mẫu hoặc tài liệu cá nhân trong luồng đồng bộ này.</div>`+table(rows,['Mã hồ sơ','Trạng thái','Số lần thử','HTTP','Lỗi gần nhất','Cập nhật','Gửi thành công','Thao tác'])+`<p class="admin-note">Gửi lại sẽ gọi endpoint tích hợp CTT thật theo cấu hình hiện có. Hãy chỉ sử dụng sau khi đã xác minh endpoint và secret trong môi trường triển khai.</p>`
+  const warning=d.warning?`<div class="inline-status warn"><b>Cần hoàn thiện cấu hình:</b> ${esc(d.warning)}</div>`:'';
+  const sourceNote=d.source==='combined'?'Đang hiển thị outbox hiện hành cùng lịch sử từ hàng đợi cũ; lịch sử cũ được giữ để tra cứu và không có nút gửi lại.':currentOutbox?'Màn hình đang đọc outbox hiện hành.':'Đang ở chế độ tương thích; thao tác gửi lại được khóa để tránh ghi nhầm vào cấu trúc dữ liệu cũ.';
+  return adminHead('Đồng bộ CTT','Theo dõi trạng thái gửi mã hồ sơ tối thiểu từ Xanh sang cổng CTT. Chỉ gửi lại khi đã kiểm tra nguyên nhân thất bại.',`<button type="button" class="btn glass" id="refresh-ctt">Làm mới</button>`)+warning+`<div class="inline-status info"><b>Lưu ý dữ liệu:</b> ${esc(sourceNote)} Không gửi câu trả lời biểu mẫu hoặc tài liệu cá nhân trong luồng đồng bộ này.</div>`+table(rows,['Mã hồ sơ','Trạng thái','Số lần thử','HTTP','Lỗi gần nhất','Cập nhật','Gửi thành công','Thao tác'])+`<p class="admin-note">Gửi lại sẽ gọi endpoint tích hợp CTT thật theo cấu hình hiện có. Hãy chỉ sử dụng sau khi đã xác minh endpoint và secret trong môi trường triển khai.</p>`
 }
 async function settingsAdmin(){
   const g=(await api('/api/admin/settings')).groups||{},s=g.general||{};applySiteTheme(s);

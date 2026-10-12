@@ -915,13 +915,54 @@ async function handleAdmin(env, request, action, p) {
 
   if(action==='ctt-integration'&&request.method==='GET'){
     assert(ADMIN_ROLES.has(user.role),403,'Chỉ quản trị viên được xem trạng thái tích hợp CTT.');
-    const rows=await env.DB.prepare(`SELECT submission_code,state,attempts,last_http_status,last_error,created_at,updated_at,sent_at FROM ctt_integration_outbox ORDER BY updated_at DESC LIMIT 300`).all();
-    return json({ok:true,items:rows.results||[]});
+    const readLegacyQueue=async()=>{
+      const legacy=await env.DB.prepare(`SELECT q.case_code AS submission_code,
+        CASE q.state WHEN 'synced' THEN 'sent' ELSE q.state END AS state,
+        q.attempts,NULL AS last_http_status,q.last_error,
+        COALESCE(s.created_at,q.updated_at) AS created_at,q.updated_at,q.ctt_synced_at AS sent_at
+        FROM ctt_sync_queue q LEFT JOIN form_submissions s ON s.id=q.submission_id
+        ORDER BY q.updated_at DESC LIMIT 300`).all();
+      return (legacy.results||[]).map(x=>({...x,_source:'legacy_queue'}));
+    };
+    try {
+      const rows=await env.DB.prepare(`SELECT submission_code,state,attempts,last_http_status,last_error,created_at,updated_at,sent_at FROM ctt_integration_outbox ORDER BY updated_at DESC LIMIT 300`).all();
+      const current=(rows.results||[]).map(x=>({...x,_source:'outbox'}));
+      let legacy=[];
+      try { legacy=await readLegacyQueue(); }
+      catch(legacyError) {
+        const legacyMessage=String(legacyError?.message||legacyError);
+        if(!/no such table:\s*ctt_sync_queue|no such column:/i.test(legacyMessage)) throw legacyError;
+      }
+      // Preserve old history even after the current outbox is created; never let the recovery SQL hide legacy rows.
+      const codes=new Set(current.map(x=>String(x.submission_code)));
+      const merged=[...current,...legacy.filter(x=>!codes.has(String(x.submission_code)))].sort((a,b)=>String(b.updated_at||'').localeCompare(String(a.updated_at||''))).slice(0,300);
+      const hasLegacy=merged.some(x=>x._source==='legacy_queue');
+      return json({ok:true,source:hasLegacy?(current.length?'combined':'legacy_queue'):'outbox',...(hasLegacy?{warning:'Lịch sử hàng đợi CTT cũ được giữ nguyên. Các dòng lịch sử cũ chỉ để tra cứu; thao tác gửi lại áp dụng cho bản ghi thuộc outbox hiện hành.'}:{}),items:merged});
+    } catch (error) {
+      const message=String(error?.message||error);
+      // Older deployed D1s used ctt_sync_queue instead of ctt_integration_outbox.
+      // Treat only missing-table/column errors as schema compatibility; preserve other failures.
+      if(!/no such table:\s*ctt_integration_outbox|no such column:/i.test(message)) throw error;
+      try {
+        const legacy=await readLegacyQueue();
+        return json({ok:true,source:'legacy_queue',warning:'Đang đọc hàng đợi đồng bộ cũ. Hãy áp dụng migrations/0011_admin_500_recovery.sql để khôi phục outbox hiện hành và chức năng gửi lại.',items:legacy});
+      } catch (legacyError) {
+        const legacyMessage=String(legacyError?.message||legacyError);
+        if(!/no such table:\s*ctt_sync_queue|no such column:/i.test(legacyMessage)) throw legacyError;
+        return json({ok:true,source:'uninitialized',warning:'Bảng đồng bộ CTT chưa được khởi tạo trên D1. Hãy áp dụng migrations/0011_admin_500_recovery.sql để khởi tạo bảng không phá hủy dữ liệu hiện có.',items:[]});
+      }
+    }
   }
   if(action==='ctt-integration'&&p[2]==='retry'&&request.method==='POST'){
     assert(ADMIN_ROLES.has(user.role),403,'Chỉ quản trị viên được gửi lại dữ liệu sang CTT.');
     const code=decodeURIComponent(p[3]||'');
-    const row=await env.DB.prepare(`SELECT payload_json FROM ctt_integration_outbox WHERE submission_code=?`).bind(code).first();
+    let row;
+    try {
+      row=await env.DB.prepare(`SELECT payload_json FROM ctt_integration_outbox WHERE submission_code=?`).bind(code).first();
+    } catch(error) {
+      if(/no such table:\s*ctt_integration_outbox|no such column:/i.test(String(error?.message||error))) throw new HttpError(503,'Bảng đồng bộ hiện hành chưa sẵn sàng. Hãy áp dụng migrations/0011_admin_500_recovery.sql rồi thử lại.');
+      throw error;
+    }
     assert(row,404,'Không tìm thấy bản ghi đồng bộ.');
     const payload=asJson(row.payload_json,null);assert(payload,500,'Dữ liệu đồng bộ không hợp lệ.');
     const result=await deliverCttSubmission(env,payload);await audit(env,user.id,'ctt.integration.retry','submission',code,{sent:!!result.sent,reason:result.reason||'',status:result.status||null},request);

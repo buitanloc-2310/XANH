@@ -5,6 +5,7 @@
  */
 export const PLATFORM = Object.freeze({
   name: 'Xanh Sky First',
+  diagnosticsPlatform: 'XANH Website Diagnostics Platform',
   domain: 'xanh.skyfirst.io.vn',
   d1Binding: 'DB',
   d1Database: 'xanh',
@@ -14,5 +15,5 @@ export const PLATFORM = Object.freeze({
   passwordIterations: 100000,
   managementCenter: 'Xanh Sky First Management Center',
   uploadFirst: true,
-  imageUrlInputRequired: false
+  imageUrlInputRequired: false,
 });

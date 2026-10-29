@@ -17,6 +17,14 @@ export function text(body, status = 200, extraHeaders = {}) {
   return new Response(body, { status, headers: { 'Content-Type': 'text/plain; charset=utf-8', ...BASE_HEADERS, ...extraHeaders } });
 }
 
+export function asJson(textValue, fallback = {}) {
+  try {
+    return textValue ? JSON.parse(textValue) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 export async function readJson(request) {
   const contentType = request.headers.get('content-type') || '';
   if (!contentType.includes('application/json')) throw new HttpError(415, 'Content-Type phải là application/json.');

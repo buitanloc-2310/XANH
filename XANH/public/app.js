@@ -1,4 +1,5 @@
 import { safeHref, safeImageSrc, isInternalHref } from './ui-safety.js';
+import { renderDiagnosticsWorkspace, wireDiagnosticsWorkspace, diagState } from './diagnostics-ui.js';
 const app = document.querySelector('#app');
 const toastRoot = document.querySelector('#toast-root');
 const state = { site:null, user:null, dirty:false, modal:null, wpSection:'overview', wpContentType:'articles', wpContext:false, scrollToTopOnRoute:false };
@@ -340,14 +341,14 @@ function resetPasswordPage(){
 }
 
 const roleNav={
-  root_admin:['dashboard','wordpress','navigation','pages','articles','projects','activities','opportunities','initiatives','resources','people','forms','submissions','media','applications','impact','contacts','newsletter','ctt','users','audit','settings'],
-  administrator:['dashboard','wordpress','navigation','pages','articles','projects','activities','opportunities','initiatives','resources','people','forms','submissions','media','applications','impact','contacts','newsletter','ctt','audit','settings'],
+  root_admin:['dashboard','wordpress','diagnostics','navigation','pages','articles','projects','activities','opportunities','initiatives','resources','people','forms','submissions','media','applications','impact','contacts','newsletter','ctt','users','audit','settings'],
+  administrator:['dashboard','wordpress','diagnostics','navigation','pages','articles','projects','activities','opportunities','initiatives','resources','people','forms','submissions','media','applications','impact','contacts','newsletter','ctt','audit','settings'],
   content_editor:['dashboard','wordpress','pages','articles','resources','people','media'],
   project_manager:['dashboard','wordpress','projects','activities','opportunities','initiatives','impact','media'],
   volunteer_coordinator:['dashboard','wordpress','forms','submissions','applications','media'],
-  viewer:['dashboard','audit'],
+  viewer:['dashboard','diagnostics','audit'],
 };
-const labels={dashboard:'Tổng quan',wordpress:'WordPress Tổng · CMS',navigation:'Menu đầu trang & chân trang',pages:'Trang & Page Builder',articles:'Tin tức',projects:'Dự án',activities:'Hoạt động',opportunities:'Cơ hội',initiatives:'Sáng kiến',resources:'Tài nguyên',people:'Con người Xanh',forms:'Form Builder',submissions:'Hồ sơ trực tiếp',media:'Media Library',applications:'Đơn đăng ký',impact:'Impact',contacts:'Liên hệ & Hợp tác',newsletter:'Newsletter',ctt:'Đồng bộ CTT',users:'Người dùng & quyền',audit:'Audit Log',settings:'Cài đặt'};
+const labels={dashboard:'Tổng quan',wordpress:'WordPress Tổng · CMS',diagnostics:'Chẩn đoán & Giám sát (Diagnostics)',navigation:'Menu đầu trang & chân trang',pages:'Trang & Page Builder',articles:'Tin tức',projects:'Dự án',activities:'Hoạt động',opportunities:'Cơ hội',initiatives:'Sáng kiến',resources:'Tài nguyên',people:'Con người Xanh',forms:'Form Builder',submissions:'Hồ sơ trực tiếp',media:'Media Library',applications:'Đơn đăng ký',impact:'Impact',contacts:'Liên hệ & Hợp tác',newsletter:'Newsletter',ctt:'Đồng bộ CTT',users:'Người dùng & quyền',audit:'Audit Log',settings:'Cài đặt'};
 const typeMap={articles:'article',projects:'project',activities:'activity',opportunities:'opportunity',initiatives:'initiative',resources:'resource'};
 async function me(){try{state.user=(await api('/api/auth/me')).user;return state.user}catch(e){if(e.status===401||e.status===403){state.user=null;return null}throw e}}
 function adminShell(body,tab){
@@ -617,7 +618,7 @@ async function admin(tab='dashboard'){
     const allowed=roleNav[state.user.role]||[];
     if(!allowed.includes(tab))tab='dashboard';
     state.wpContext=tab==='wordpress';
-    if(tab==='wordpress')body=await wordpressAdmin();else if(tab==='dashboard'){const d=await api('/api/admin/dashboard');body=adminHead('Tổng quan','Vận hành website và cộng đồng từ một nơi.')+`<div class="dash">${[['Hồ sơ cần xử lý',d.stats.pending_submissions],['Đơn cần xử lý',d.stats.pending_applications],['Nội dung nháp',d.stats.drafts],['Media',d.stats.media],['Lượt tham gia đã xác minh',d.stats.participants],['Giờ cộng đồng đã xác minh',d.stats.volunteer_hours]].map(x=>`<div><span>${x[0]}</span><strong>${fmt(x[1])}</strong></div>`).join('')}</div><h3 class="section-title">Hoạt động gần đây</h3>${table((d.recent||[]).map(a=>[date(a.created_at),esc(a.user_name||'System'),esc(a.action),esc(a.object_type)]),['Thời gian','Người dùng','Hành động','Đối tượng'])}`}
+    if(tab==='wordpress')body=await wordpressAdmin();else if(tab==='diagnostics'){const sub=location.pathname.split('/')[3]||diagState.subview||'overview';body=await renderDiagnosticsWorkspace({api,user:state.user,subview:sub});}else if(tab==='dashboard'){const d=await api('/api/admin/dashboard');body=adminHead('Tổng quan','Vận hành website và cộng đồng từ một nơi.')+`<div class="dash">${[['Hồ sơ cần xử lý',d.stats.pending_submissions],['Đơn cần xử lý',d.stats.pending_applications],['Nội dung nháp',d.stats.drafts],['Media',d.stats.media],['Lượt tham gia đã xác minh',d.stats.participants],['Giờ cộng đồng đã xác minh',d.stats.volunteer_hours]].map(x=>`<div><span>${x[0]}</span><strong>${fmt(x[1])}</strong></div>`).join('')}</div><h3 class="section-title">Hoạt động gần đây</h3>${table((d.recent||[]).map(a=>[date(a.created_at),esc(a.user_name||'System'),esc(a.action),esc(a.object_type)]),['Thời gian','Người dùng','Hành động','Đối tượng'])}`}
     else if(tab==='navigation')body=await navigationAdmin();else if(tab==='people')body=await peopleAdmin();else if(tab==='forms')body=await formsAdmin();else if(tab==='submissions')body=await submissionsAdmin();else if(tab==='media')body=await mediaAdmin();else if(['articles','projects','activities','opportunities','initiatives','resources'].includes(tab))body=await contentAdmin(tab);else if(tab==='pages')body=await pagesAdmin();else if(tab==='applications')body=await applicationsAdmin();else if(tab==='impact')body=await impactAdmin();else if(tab==='users')body=await usersAdmin();else if(tab==='audit')body=await auditAdmin();else if(tab==='contacts')body=await contactsAdmin();else if(tab==='newsletter')body=await newsletterAdmin();else if(tab==='ctt')body=await cttAdmin();else if(tab==='settings')body=await settingsAdmin();
   }catch(e){if(e.status===403)body=adminHead('403 · Không có quyền','Vai trò hiện tại không được phép xem phân hệ này.')+`<div class="empty">Quyền được kiểm tra ở cả API backend, không chỉ ẩn menu.</div>`;else body=adminHead('Không thể tải',e.status?`Yêu cầu không thành công (HTTP ${e.status}).`:'Chưa kết nối được với máy chủ.')+`<div class="empty error-state"><h3>Chưa thể tải dữ liệu quản trị</h3><p>Kiểm tra kết nối, trạng thái dịch vụ và cấu hình môi trường. Thông tin lỗi kỹ thuật chi tiết không được hiển thị tại đây.</p><button type="button" class="btn glass" id="retry-admin-module">Thử lại</button></div>`}
   const existing=$('.admin',app),sameUser=existing&&existing.dataset.adminUser===String(state.user.id);
@@ -626,6 +627,7 @@ async function admin(tab='dashboard'){
   wireAdmin(tab);$('#retry-admin-module')?.addEventListener('click',()=>admin(tab));
 }
 function wireAdmin(tab){
+  if(tab==='diagnostics'){wireDiagnosticsWorkspace({root:$('.admin-body',app)||app,api,toast,makeModal,closeModal,refresh:()=>admin('diagnostics')});}
   $$('[data-wp-section]').forEach(b=>b.addEventListener('click',()=>{const next=b.dataset.wpSection;if(state.dirty&&!confirm('Bạn có thay đổi chưa lưu. Chuyển khu vực mà không lưu?'))return;state.dirty=false;state.wpSection=next;admin('wordpress')}));
   $$('[data-wp-content-type]').forEach(b=>b.addEventListener('click',()=>{if(state.dirty&&!confirm('Bạn có thay đổi chưa lưu. Chuyển loại nội dung mà không lưu?'))return;state.dirty=false;state.wpContentType=b.dataset.wpContentType;admin('wordpress')}));
   $('#wp-reload-overview')?.addEventListener('click',()=>admin('wordpress'));

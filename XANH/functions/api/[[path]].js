@@ -3,6 +3,7 @@ import { hashPassword, verifyPassword, PBKDF2_ITERATIONS, randomToken, sha256Hex
 import { currentUser, requireUser, createSession, sessionCookie, clearSessionCookie, destroySession, audit } from '../_lib/auth.js';
 import { validateUpload, mediaKey } from '../_lib/media.js';
 import { completeImpactConfigRows } from '../_lib/impact-config.js';
+import { handleDiagnosticsAdmin, handleDiagnosticsCron } from '../_lib/diagnostics-api.js';
 
 const CONTENT_TYPES = new Set(['article','project','activity','opportunity','resource','initiative']);
 const PUBLIC_STATUSES = new Set(['published','open','completed']);
@@ -1013,6 +1014,10 @@ async function handleAdmin(env, request, action, p) {
     return json({ok:!!result.sent,state:result.sent?'sent':'failed',reason:result.reason||null,status:result.status||null});
   }
 
+  if(action==='diagnostics'){
+    return await handleDiagnosticsAdmin(env,request,user,p,{apiOnRequest:onRequest,sendMailFn:sendMail,rateLimitFn:rateLimit});
+  }
+
   throw new HttpError(404,'Không tìm thấy API quản trị.');
 }
 
@@ -1026,6 +1031,7 @@ export async function onRequest(context) {
     if (p[0] === 'public') return await handlePublic(env,request,p[1]);
     if (p[0] === 'media') return await handleMedia(env,request,p[1]);
     if (p[0] === 'admin') return await handleAdmin(env,request,p[1],p);
+    if (p[0] === 'cron' && p[1] === 'diagnostics') return await handleDiagnosticsCron(env,request,onRequest,sendMail);
     return json({ok:false,error:'API route not found'},404);
   } catch (e) { return errorResponse(e); }
 }

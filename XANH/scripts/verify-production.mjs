@@ -3,8 +3,9 @@ import { resolve, relative } from 'node:path';
 const root = resolve(new URL('..', import.meta.url).pathname);
 const mustExist = [
   'functions/api/[[path]].js','functions/sitemap.xml.js','functions/_lib/crypto.js','functions/_lib/auth.js','functions/_lib/media.js',
-  'migrations/0001_initial.sql','migrations/0002_people_forms.sql','migrations/0003_production_hardening.sql','migrations/0004_seed_hanoi_volunteer_form.sql','migrations/0005_form_builder_single_source.sql','migrations/0006_navigation_impact_content.sql','migrations/0007_appearance_ctt_case_sync.sql','migrations/0007_ctt_integration_outbox.sql','migrations/0008_content_editorial_refresh.sql','migrations/0009_impact_display_full_control.sql','migrations/0010_lifecycle_accessibility.sql',
-  'public/index.html','public/app.js','public/accessibility.js','public/ui-safety.js','public/styles.css','public/sw.js','public/assets/xanh-sky-first-logo.png','public/assets/dau-an-xanh-landscape.webp',
+  'functions/_lib/diagnostics.js','functions/_lib/diagnostics-api.js','workers/diagnostics-cron.js','scripts/playwright-lighthouse-runner.mjs',
+  'migrations/0001_initial.sql','migrations/0002_people_forms.sql','migrations/0003_production_hardening.sql','migrations/0004_seed_hanoi_volunteer_form.sql','migrations/0005_form_builder_single_source.sql','migrations/0006_navigation_impact_content.sql','migrations/0007_appearance_ctt_case_sync.sql','migrations/0007_ctt_integration_outbox.sql','migrations/0008_content_editorial_refresh.sql','migrations/0009_impact_display_full_control.sql','migrations/0010_lifecycle_accessibility.sql','migrations/0011_admin_500_recovery.sql','migrations/0012_xanh_diagnostics_platform.sql',
+  'public/index.html','public/app.js','public/diagnostics-ui.js','public/accessibility.js','public/ui-safety.js','public/styles.css','public/sw.js','public/assets/xanh-sky-first-logo.png','public/assets/dau-an-xanh-landscape.webp',
   'package.json','wrangler.jsonc','README.md','SECURITY.md','FINAL_ACCEPTANCE.md'
 ];
 let failed = false;
@@ -40,6 +41,10 @@ if (/ADD COLUMN\s+manual_value/i.test(migration009)) { console.error('Duplicate 
 const migration010 = await readFile(resolve(root,'migrations/0010_lifecycle_accessibility.sql'),'utf8');
 for (const field of ['ADD COLUMN expires_at','ADD COLUMN recorded_by','ADD COLUMN visibility']) {
   if (!migration010.includes(field)) { console.error(`Lifecycle migration missing: ${field}`); failed = true; }
+}
+const migration012 = await readFile(resolve(root,'migrations/0012_xanh_diagnostics_platform.sql'),'utf8');
+for (const tbl of ['diag_targets','diag_schedules','diag_runs','diag_check_results','diag_incidents','diag_incident_events','diag_alerts','diag_alert_logs','diag_baselines']) {
+  if (!migration012.includes(`CREATE TABLE IF NOT EXISTS ${tbl}`)) { console.error(`Diagnostics migration missing table: ${tbl}`); failed = true; }
 }
 const indexHtml = await readFile(resolve(root,'public/index.html'),'utf8');
 const scaler = await readFile(resolve(root,'public/accessibility.js'),'utf8');
